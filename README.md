@@ -73,7 +73,7 @@ Los datos no se tocan al actualizar.
 | **Cargar** | Un game en menos de un minuto. Al guardar: **Siguiente game del set** (copia rival, personajes y set) o **Nuevo set**. En **Torneo** te guía con los baneos de stages (G1: piedra, papel o tijeras 1-2-1; G2+: el ganador banea 3 y el perdedor elige; con un solo Steve, elige el que no usa Steve). |
 | **Estadísticas** | Filtros, Foco de la semana, KPIs, patrones (por game, remontadas, quién eligió el stage, cansancio), gráficos por semana, **Matchups** y **Stages** (los peores en rojo) y **Cloud vs Steve**. |
 | **Historial** | Sets agrupados. Tocá uno para ver sus games, **editarlos**, **borrarlos** o agregar otro game. |
-| **Notas** | Notas por **matchup** (ej. Cloud vs Pikachu) y por **jugador**, con tu récord arriba y las notas de los games que les corresponden. También todas las notas de games con buscador. Al cargar un game, si tenés nota del rival o del matchup, aparece un resumen. |
+| **Notas** | Notas por **matchup** (ej. Cloud vs Pikachu) y por **jugador**, con tu récord arriba y las notas de los games que les corresponden. También todas las notas de games con buscador y las **guías de Mr.E** (81 personajes + fundamentos), que se pueden usar como base de una nota de matchup. Al cargar un game, si tenés nota del rival o del matchup, aparece un resumen. |
 | **Ajustes** | Respaldo JSON/CSV, importar, torneos de start.gg (token y actualización), main/secundario, stocks y datos de ejemplo. |
 
 - ⚠ junto a un dato = menos de 5 games: no saques conclusiones todavía.
@@ -104,5 +104,6 @@ js/stages.js        qué imagen usa cada stage
 js/startgg.js       sincronización con la API de start.gg
 img/stages/         imágenes de los stages (480 px, JPG)
 data/torneos.json   historial de torneos de start.gg (sets y games)
+data/mre.json       guías de matchups y fundamentos de Mr.E
 icons/              íconos de la app
 ```
