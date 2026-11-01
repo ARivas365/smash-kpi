@@ -486,6 +486,9 @@ function cleanGame(f) {
     rpsWinner: f.type === 'torneo' ? f.rpsWinner : null, prevWinner: f.type === 'torneo' ? f.prevWinner : null,
     bans: f.type === 'torneo' ? f.bans : [], stagePicker: f.stage ? f.stagePicker : null,
     vodSkip: !!f.vodSkip,
+    // datos de torneos importados de start.gg
+    ...(f.imported ? { imported: f.imported, event: f.event, eventId: f.eventId, online: f.online, round: f.round } : {}),
+    stocksUnknown: f.myStocksLeft == null || f.oppStocksLeft == null,
   };
 }
 
@@ -495,7 +498,7 @@ async function saveGame() {
   if (!f.rival.trim()) missing.push('rival');
   if (!f.oppChar) missing.push('personaje del rival');
   if (!f.result) missing.push('resultado');
-  else if ((f.result === 'W' ? f.myStocksLeft : f.oppStocksLeft) == null) missing.push('stocks restantes');
+  else if (!f.imported && (f.result === 'W' ? f.myStocksLeft : f.oppStocksLeft) == null) missing.push('stocks restantes');
   if (missing.length) { toast('Falta: ' + missing.join(', '), 'err'); return; }
   syncPercents(f);
   const g = cleanGame(f);
@@ -574,7 +577,8 @@ function filtersHTML() {
     <select class="inp" data-filter="${key}"><option value="">Todos</option>
     ${opts.map(o => `<option value="${esc(o)}" ${F[key] === o ? 'selected' : ''}>${esc(labels[o] || o)}</option>`).join('')}</select></label>`;
   const range = (n, l) => `<button class="chip sm ${F.from === daysAgo(n) && !F.to ? 'on' : ''}" data-a="range" data-v="${n}">${l}</button>`;
-  const summary = [F.myChar, F.oppChar && 'vs ' + F.oppChar, F.rival, F.stage, F.type && TYPE_LABEL[F.type],
+  const summary = [F.source && (F.source === 'startgg' ? 'start.gg' : 'Cargados'), F.online && (F.online === 'online' ? 'Online' : 'Offline'),
+    F.myChar, F.oppChar && 'vs ' + F.oppChar, F.rival, F.stage, F.type && TYPE_LABEL[F.type],
     (F.from || F.to) && `${F.from ? fmtDate(F.from) : '…'} → ${F.to ? fmtDate(F.to) : 'hoy'}`].filter(Boolean).join(' · ');
   return `<div class="filterbar">
     <button class="btn filter-toggle ${active ? 'has' : ''}" data-a="toggleFilters">Filtros${active ? ` (${active})` : ''} ${S.filtersOpen ? '▴' : '▾'}</button>
@@ -588,6 +592,8 @@ function filtersHTML() {
         ${sel('rival', 'Rival', filterOptions('rival'))}
         ${sel('stage', 'Stage', filterOptions('stage'))}
         ${sel('type', 'Tipo', TYPES.map(t => t[0]), TYPE_LABEL)}
+        ${sel('source', 'Origen', ['app', 'startgg'], { app: 'Cargados en la app', startgg: 'Torneos (start.gg)' })}
+        ${sel('online', 'Modalidad', ['offline', 'online'], { offline: 'Offline', online: 'Online' })}
         <label class="f-field"><span>Desde</span><input type="date" class="inp" data-filter="from" value="${F.from || ''}"></label>
         <label class="f-field"><span>Hasta</span><input type="date" class="inp" data-filter="to" value="${F.to || ''}"></label>
       </div>
@@ -599,6 +605,7 @@ const lowBadge = n => `<span class="lowchip" title="Pocos datos">⚠ ${n} game${
 
 function tile(key, k, sub) {
   const n = st.sampleSize(k, key);
+  if (!n && key !== 'winGames') return ''; // sin ningún dato, la tarjeta no aporta
   const low = n < MIN_N;
   return `<div class="tile ${low ? 'low' : ''}">
     <div class="t-label">${KPIS[key].label}</div>
@@ -656,13 +663,13 @@ function resumenHTML(fg, setMap) {
     <div class="tiles">
       ${tile('winGames', k, `${k.wins}-${k.losses} · ${k.n} games`)}
       ${tile('winSets', k, `${k.setWins}-${k.sets - k.setWins} · ${k.sets} sets`)}
-      ${tile('stockDiff', k, 'por game')}
+      ${tile('stockDiff', k, `por game · ${k.stockGames} games con stocks`)}
       ${tile('openingRatio', k, `${k.myOpenings} / ${k.oppOpenings}`)}
       ${tile('openingsPerKill', k, `más bajo = mejor · rival: ${fmtKpi('openingsPerKill', k.oppOpeningsPerKill)}`)}
       ${tile('killPct', k, `más bajo = mejor · ${k.killGames} games con %`)}
       ${tile('deathPct', k, `más alto = mejor · ${k.deathGames} games con %`)}
       ${tile('earlyDeaths', k, `${k.earlyCount} de ${k.deathRecorded} muertes con %`)}
-      ${tile('recoveryRate', k, `${k.recoveryDeaths} de ${k.totDeaths} muertes`)}
+      ${tile('recoveryRate', k, `${k.recoveryDeaths} de ${k.recDeaths} muertes`)}
       ${k.cloudGames ? tile('limitConv', k, `${k.limitConverted} kills de ${k.limitUsed} usados · ${k.limitCharged} cargados`) : ''}
     </div>
     ${patternsHTML(fg, setMap)}
@@ -764,7 +771,7 @@ function torneosHTML() {
   const events = d.events.filter(e => e.date >= cutoff).sort((a, b) => b.date.localeCompare(a.date));
   const ev = new Map(events.map(e => [e.id, e]));
   const sets = d.sets.filter(s => ev.has(s.event));
-  const played = sets.filter(s => !s.dq);
+  const played = sets.filter(s => !s.dq && s.my != null);
   const rec = arr => ({ n: arr.length, w: arr.filter(s => s.won).length });
   const wl = r => `${r.w}-${r.n - r.w}`;
   const groupRec = keyFn => [...st.groupBy(played, keyFn).entries()].map(([k, arr]) => ({ k, ...rec(arr) }));
@@ -781,8 +788,8 @@ function torneosHTML() {
   const shownEvents = S.extAllEvents ? events : events.slice(0, 10);
   const tileHTML = (label, val, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-val">${val}</div><div class="t-sub">${sub}</div></div>`;
   return `
-    <section class="card"><span class="lbl">🏆 Tus torneos (supermajor.gg)</span>
-      <p class="muted small">${esc(d.player)} · ${events.length} torneos · actualizado ${fmtDate(d.fetchedAt)}. Son resultados por set: no tienen stocks, openings ni stages, y no los afectan los filtros de arriba.</p>
+    <section class="card"><span class="lbl">🏆 Tus torneos (start.gg)</span>
+      <p class="muted small">${esc(d.player)} · ${events.length} torneos · actualizado ${fmtDate(d.fetchedAt)}. Resultados por set, incluidos los sets sin detalle por game. Los games con detalle (stage y personajes) también están en Resumen, Matchups y Stages: filtrá por <b>Origen</b> para separarlos.</p>
       <div class="chips">${rangeChip('all', 'Todo')}${rangeChip('year', 'Último año')}${rangeChip('half', 'Últimos 6 meses')}</div>
     </section>
     <div class="tiles">
@@ -807,7 +814,7 @@ function torneosHTML() {
         const r = rec(sets.filter(s => s.event === e.id && !s.dq));
         return `<div class="ev-row"><div class="ev-main"><b>${esc(e.name)}</b>
           <small>${fmtDate(e.date)} · ${e.online ? '🌐 Online' : '🏟️ Offline'} · sets ${wl(r)}</small></div>
-          <div class="ev-place"><b>${e.placement}º</b><small>de ${e.entrants}</small></div></div>`;
+          <div class="ev-place"><b>${e.placement ? e.placement + 'º' : '—'}</b><small>de ${e.entrants}</small></div></div>`;
       }).join('')}
       ${events.length > shownEvents.length ? `<button class="btn" data-a="extAllEvents">Ver los ${events.length} torneos</button>` : ''}
     </section>`;
@@ -874,12 +881,12 @@ function gameLine(g) {
   const vod = needsVod(g);
   return `<div class="game ${g.result === 'W' ? 'w' : 'l'}">
     <div class="g-top"><b class="g-res">${g.result}</b><span>G${g.gameNum} · ${esc(g.stage || 'sin stage')}</span>
-      <span class="muted">${g.myStocksLeft}-${g.oppStocksLeft} stocks</span>${vod ? '<span class="vod-badge">📼 VOD pendiente</span>' : ''}</div>
+      ${st.stocksKnown(g) ? `<span class="muted">${g.myStocksLeft}-${g.oppStocksLeft} stocks</span>` : ''}${vod ? '<span class="vod-badge">📼 VOD pendiente</span>' : ''}</div>
     <div class="g-info">${esc(g.myChar)} vs ${esc(g.oppChar)}${(g.myOpenings || g.oppOpenings) ? ` · Openings ${g.myOpenings}/${g.oppOpenings}` : ''}      ${g.stagePicker ? `<br>Stage elegido por ${g.stagePicker === 'me' ? 'mí' : 'el rival'}` : ''}
       ${g.bans?.length ? `<br>Baneos: ${g.bans.map(b => `${esc(b.stage)} (${b.by === 'me' ? 'yo' : 'rival'})`).join(', ')}` : ''}
       ${kp.length ? `<br>Maté a: ${kp.join('%, ')}%` : ''}${dp.length ? `<br>Morí a: ${dp.join('%, ')}%` : ''}
       ${g.recoveryDeaths ? `<br>Muertes por recovery: ${g.recoveryDeaths}` : ''}
-      ${g.myChar === 'Cloud' ? `<br>Limit: ${g.limitsCharged} cargados · ${g.limitsUsed} usados · ${g.limitsConverted} dieron kill` : ''}
+      ${g.myChar === 'Cloud' && !(g.imported && !g.limitsCharged) ? `<br>Limit: ${g.limitsCharged} cargados · ${g.limitsUsed} usados · ${g.limitsConverted} dieron kill` : ''}
       ${atk ? `<br>Ataques (mod): ${esc(atk)}` : ''}
       ${g.notes ? `<br><i>“${esc(g.notes)}”</i>` : ''}</div>
     ${vod ? `<div class="g-actions"><button class="btn sm primary" data-a="vodFill" data-v="${g.id}">Completar %</button>
@@ -895,7 +902,8 @@ function setCardHTML(s, open, games = s.games) {
   return `<article class="card set ${s.decided ? (s.won ? 'won' : 'lost') : ''}">
     <button class="set-head" data-a="toggleSet" data-v="${s.setId}">
       <span class="score"><b class="win">${s.wins}</b>-<b class="loss">${s.losses}</b></span>
-      <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small></span>
+      <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small>
+        ${s.games[0].imported ? `<small>🏆 ${esc(s.games[0].event || '')}${s.games[0].round ? ' · ' + esc(s.games[0].round) : ''}</small>` : ''}</span>
       <span class="set-meta"><small>${fmtDate(s.date)}</small><small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
     </button>
     ${open ? `<div class="set-body">${games.map(gameLine).join('')}
@@ -1107,6 +1115,16 @@ function renderAjustes() {
   </section>
 
   <section class="card">
+    <span class="lbl">Torneos de start.gg</span>
+    ${S.ext ? `<p class="muted small">${S.games.filter(g => g.imported).length} games importados de ${S.ext.events.length} torneos · datos del ${fmtDate(S.ext.fetchedAt)}.
+      Tienen stage, personajes y ganador; los stocks solo cuando se reportaron.</p>
+      ${S.games.some(g => g.imported)
+        ? '<button class="btn" data-a="sggRemove">Quitar los games importados</button>'
+        : '<button class="btn" data-a="sggImport">Importar games de torneos</button>'}`
+      : '<p class="muted small">Cargando…</p>'}
+  </section>
+
+  <section class="card">
     <span class="lbl">Ataques por partida (mod de PC)</span>
     <p class="muted small">${S.games.filter(g => g.attacks).length} games con ataques · ${S.attackLogs.length} registros esperando un game que coincida.</p>
     <button class="btn" data-a="attackFormat">Ver formato del JSON</button>
@@ -1198,6 +1216,18 @@ const actions = {
     renderStats();
   },
   statsTab: t => { S.statsTab = t.dataset.v; renderStats(); },
+  sggImport: async () => { await importStartgg(`${S.ext.fetchedAt}:${S.ext.games.length}`); renderAjustes(); },
+  sggRemove: async () => {
+    const ids = S.games.filter(g => g.imported).map(g => g.id);
+    const ok = await ask('Quitar torneos importados', `Se van a quitar <b>${ids.length}</b> games importados de start.gg (también los % u openings que les hayas agregado). Tus games cargados a mano no se tocan.`,
+      [{ value: 'y', label: 'Sí, quitarlos', cls: 'danger' }]);
+    if (!ok) return;
+    await db.delMany('games', ids);
+    S.games = S.games.filter(g => !g.imported);
+    await db.put('meta', 'off', 'sggImport');
+    renderAjustes();
+    toast('Games importados quitados');
+  },
   extRange: t => { S.extRange = t.dataset.v; renderStats(); },
   extAllEvents: () => { S.extAllEvents = true; renderStats(); },
   mSort: t => { S.mSort = t.dataset.v; renderStats(); },
@@ -1340,12 +1370,31 @@ async function init() {
   S.form = newForm();
   render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  // historial de torneos de supermajor, incluido en la app (data/supermajor.json)
-  fetch('data/supermajor.json').then(r => (r.ok ? r.json() : null)).catch(() => null).then(d => {
-    if (d?.format !== 'smash-kpi-supermajor') return;
+  // historial de torneos de start.gg, incluido en la app (data/torneos.json)
+  fetch('data/torneos.json').then(r => (r.ok ? r.json() : null)).catch(() => null).then(async d => {
+    if (d?.format !== 'smash-kpi-torneos') return;
     S.ext = d;
-    if (S.tab === 'stats' || S.tab === 'ajustes') render();
+    // cada versión nueva del archivo agrega sus games una vez (salvo que los hayas quitado en Ajustes)
+    const version = `${d.fetchedAt}:${d.games.length}`;
+    const done = await db.get('meta', 'sggImport');
+    if (done !== version && done !== 'off') await importStartgg(version, false);
+    if (S.tab !== 'cargar') render();
   });
+}
+
+const expandImported = g => ({
+  type: 'torneo', stocks: 3, myOpenings: 0, oppOpenings: 0, killPercents: [], deathPercents: [], recoveryDeaths: 0,
+  limitsCharged: 0, limitsUsed: 0, limitsConverted: 0, notes: '', bans: [], stagePicker: null,
+  imported: 'startgg', vodSkip: true, updatedAt: Date.now(), ...g,
+  stocksUnknown: g.myStocksLeft == null || g.oppStocksLeft == null,
+});
+
+async function importStartgg(version, announce = true) {
+  const have = new Set(S.games.map(g => g.id));
+  const add = S.ext.games.filter(g => !have.has(g.id)).map(expandImported);
+  if (add.length) { await db.putMany('games', add); S.games.push(...add); }
+  await db.put('meta', version, 'sggImport');
+  if (add.length || announce) toast(`${add.length} games de torneos importados de start.gg`, 'ok');
 }
 
 init();
