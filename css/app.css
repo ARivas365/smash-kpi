@@ -267,7 +267,31 @@ details.vod[open] > summary::after { content: "▴"; }
 
 .h2h { font-size: .9rem; padding: 10px 12px; border-radius: 12px; background: var(--surface2); }
 .h2h:empty { display: none; }
+#rivalH2H { display: flex; flex-direction: column; gap: 8px; }
 #rivalH2H:empty { display: none; }
+
+/* ---------- notas ---------- */
+.note-card, .note-game, .note-hint {
+  display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+}
+.note-card:active, .note-game:active, .note-hint:active { transform: scale(.99); }
+.nc-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.nc-top b { font-size: 1.05rem; }
+.nc-top small { color: var(--muted); flex: none; }
+.nc-snip { font-size: .9rem; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.note-game { background: var(--surface2); }
+.ng-top { font-size: .88rem; }
+.ng-top b { margin-right: 4px; }
+.note-game small { color: var(--muted); }
+.ng-text { white-space: pre-wrap; font-size: .92rem; }
+.note-hint { background: rgba(181, 144, 255, .1); border-color: rgba(181, 144, 255, .4); padding: 10px 12px; font-size: .88rem; }
+.note-hint span { color: var(--muted); white-space: pre-line; }
+.note-head { display: flex; align-items: center; gap: 10px; }
+.note-head > div { display: flex; flex-direction: column; min-width: 0; }
+.note-head b { font-size: 1.15rem; }
+.note-text { min-height: 260px; line-height: 1.45; }
+.note-read { white-space: pre-wrap; line-height: 1.5; }
 .ev-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
 .ev-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ev-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -314,7 +338,7 @@ details.vod[open] > summary::after { content: "▴"; }
 /* ---------- barra inferior ---------- */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tabbar-h) + var(--safe-b)); padding-bottom: var(--safe-b);
   background: #141721; border-top: 1px solid var(--border);
 }
