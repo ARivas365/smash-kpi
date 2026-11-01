@@ -1,6 +1,6 @@
 // Envoltorio mínimo de IndexedDB.
 const DB_NAME = 'smash-kpi';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let dbPromise;
 
 function open() {
@@ -17,6 +17,8 @@ function open() {
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
         // v2: se quitó el registro de ataques del mod de PC
         if (db.objectStoreNames.contains('attackLogs')) db.deleteObjectStore('attackLogs');
+        // v3: notas de matchups y de jugadores
+        if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
