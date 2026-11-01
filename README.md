@@ -1,4 +1,4 @@
-# Smash KPI
+﻿# Smash KPI
 
 App (PWA) para registrar y analizar KPIs de partidas de Super Smash Bros. Ultimate desde el teléfono.
 Funciona 100% offline, sin cuentas ni servidores: los datos quedan guardados **solo en tu teléfono** (IndexedDB).
@@ -96,7 +96,7 @@ js/data.js          roster, stages y definición de KPIs
 js/sample.js        generador de datos de ejemplo
 js/stages.js        qué imagen usa cada stage
 img/stages/         imágenes de los stages (480 px, JPG)
-data/supermajor.json  historial de torneos de supermajor.gg (por set)
+data/torneos.json   historial de torneos de start.gg (sets y games)
 icons/              íconos de la app
 FORMATO-ATAQUES.md  formato JSON para el futuro mod de PC
 ```
