@@ -1,6 +1,6 @@
 // Service worker: guarda la app en caché para que funcione sin internet.
 // Estrategia: responde desde la caché al instante y actualiza en segundo plano.
-const CACHE = 'smash-kpi-v6';
+const CACHE = 'smash-kpi-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,7 @@ const ASSETS = [
   './js/sample.js',
   './js/stages.js',
   './manifest.json',
-  './data/supermajor.json',
+  './data/torneos.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/maskable-512.png',
