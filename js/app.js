@@ -347,6 +347,7 @@ function renderCargar() {
   const k = killsKnown(f), d = deathsKnown(f);
 
   view.innerHTML = `
+  ${freshBannerHTML()}
   ${si.n ? `<div class="setbar">Set vs <b>${esc(f.rival)}</b> · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando G${f.gameNum}</div>` : ''}
   <section class="card">
     <div class="row-between"><span class="lbl">Tipo de partida</span>
@@ -1049,8 +1050,45 @@ async function importFile(file) {
 
 function requestPersist() {
   if (S.persisted || !navigator.storage?.persist) return;
-  navigator.storage.persist().then(p => { S.persisted = p; });
+  navigator.storage.persist().then(p => { S.persisted = p; }).catch(() => {});
 }
+
+// Aviso cuando la base arrancó vacía: si ya había datos, los borró el navegador.
+function freshBannerHTML() {
+  if (!S.freshDb || S.freshDismissed) return '';
+  return `<section class="card alert">
+    <b>📦 La app arrancó sin datos guardados</b>
+    <p class="small">Si es la primera vez que la abrís, ignorá esto. Si ya tenías games, notas o tu token de start.gg,
+      <b>Brave borró los datos de este sitio</b>. Tus torneos de start.gg se cargan de nuevo solos; lo demás se recupera importando un respaldo.</p>
+    <div class="btn-row"><button class="btn" data-a="storageHelp">Cómo evitarlo</button>
+      <label class="btn file-btn">Importar respaldo<input type="file" accept=".json,.txt,application/json,text/plain" data-in="importFile" hidden></label></div>
+    <button class="btn ghost" data-a="freshOk">Entendido</button>
+  </section>`;
+}
+
+function storageCardHTML() {
+  const manual = S.games.filter(g => !g.imported && !g.sample).length;
+  const imported = S.games.filter(g => g.imported).length;
+  return `<section class="card">
+    <span class="lbl">Almacenamiento</span>
+    <p class="small">Datos guardados en este teléfono desde el <b>${S.createdAt ? fmtDate(st.ymd(new Date(S.createdAt))) : '—'}</b>.
+      Si esa fecha cambia sola a hoy, el navegador está borrando los datos.</p>
+    <p class="small">${manual} games cargados por vos · ${imported} de torneos · ${S.notes.length} notas · token de start.gg: <b>${S.sgg.token ? 'guardado' : 'no guardado'}</b></p>
+    <p class="small">${S.persisted ? '✅ Almacenamiento persistente activado' : '⚠ El navegador no marcó los datos como persistentes: puede borrarlos si se configura así.'}</p>
+    <button class="btn" data-a="storageHelp">Cómo evitar que Brave borre los datos</button>
+  </section>`;
+}
+
+const STORAGE_HELP = `
+  <ol class="help-steps">
+    <li>Abrí <b>arivas365.github.io/smash-kpi</b> en Brave, en una <b>pestaña normal</b> (las pestañas privadas borran todo al cerrarse).</li>
+    <li>Tocá el <b>ícono del león</b> (Shields) en la barra de direcciones.</li>
+    <li>Si aparece <b>"Olvidarme cuando cierre este sitio"</b> (<i>Forget me when I close this site</i>), <b>desactivalo</b>.</li>
+    <li>En las opciones de cookies, no uses <b>"Bloquear todas las cookies"</b>: dejá la opción por defecto (bloquear solo las de otros sitios).</li>
+    <li>Menú <b>⋮ → Configuración → Brave Shields y privacidad</b>: si está activado <b>"Borrar datos de navegación al salir"</b>, desactivalo o destildá <b>"Cookies y datos de sitios"</b>.</li>
+    <li>Volvé a pegar tu token de start.gg en Ajustes y hacé un <b>respaldo</b>.</li>
+  </ol>
+  <p class="muted small">Actualizar la app no borra nada: los datos solo se van si el navegador los borra, con "Borrar todo" o al importar un respaldo con "Reemplazar".</p>`;
 
 function renderAjustes() {
   setTitle('Ajustes');
@@ -1059,6 +1097,7 @@ function renderAjustes() {
   const sampleN = S.games.filter(g => g.sample).length;
   const charOpts = sel => ROSTER.map(r => r[0]).sort((a, b) => a.localeCompare(b)).map(c => `<option ${c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('');
   view.innerHTML = `
+  ${freshBannerHTML()}
   <section class="card ${overdue ? 'alert' : ''}">
     <span class="lbl">Respaldo</span>
     <p>${S.lastBackup ? `Último respaldo: <b>${days === 0 ? 'hoy' : `hace ${days} día${days === 1 ? '' : 's'}`}</b>` : '<b>Nunca hiciste un respaldo.</b>'}</p>
@@ -1079,6 +1118,8 @@ function renderAjustes() {
 
   ${sggCardHTML()}
 
+  ${storageCardHTML()}
+
   <section class="card">
     <span class="lbl">Preferencias</span>
     <label class="f-field"><span>Mi main</span><select class="inp" data-in="setMain">${charOpts(S.settings.main)}</select></label>
@@ -1095,8 +1136,7 @@ function renderAjustes() {
 
   <section class="card">
     <span class="lbl">Datos</span>
-    <p class="muted small">${S.games.length} games guardados en este teléfono${sampleN ? ` (${sampleN} de ejemplo)` : ''}.
-      ${S.persisted ? 'Almacenamiento persistente activado.' : ''}</p>
+    <p class="muted small">${S.games.length} games guardados en este teléfono${sampleN ? ` (${sampleN} de ejemplo)` : ''}.</p>
     <div class="stack">
       ${sampleN ? '<button class="btn big" data-a="clearSample">Borrar datos de ejemplo</button>' : '<button class="btn big" data-a="loadSample">Cargar datos de ejemplo</button>'}
       <button class="btn big danger" data-a="wipe">Borrar todo</button>
@@ -1440,6 +1480,9 @@ const actions = {
   statsTab: t => { S.statsTab = t.dataset.v; renderStats(); },
   sggImport: async () => { await importStartgg('always'); renderAjustes(); },
   sggSync: () => runSync(true),
+  storageHelp: () => openSheet(`<div class="sheet-head"><h2>Que Brave no borre tus datos</h2>
+    <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div><div class="sheet-body">${STORAGE_HELP}</div>`),
+  freshOk: () => { S.freshDismissed = true; render(); },
   sggSaveToken: async () => {
     const token = view.querySelector('[data-in="sggToken"]').value.trim();
     if (!/^[a-z0-9]{20,}$/i.test(token)) { toast('Eso no parece un token de start.gg', 'err'); return; }
@@ -1606,12 +1649,22 @@ async function init() {
     S.lastBackup = lastBackup || null;
     if (focusKpi && KPIS[focusKpi]) S.focusKpi = focusKpi;
     S.persisted = (await navigator.storage?.persisted?.()) || false;
+    // fecha de creación de la base: si falta y no hay nada guardado, la base arrancó vacía
+    // (primera vez, o Brave borró los datos del sitio)
+    let createdAt = await db.get('meta', 'createdAt');
+    if (!createdAt) {
+      S.freshDb = !games.length && !notes.length && !settings && !lastBackup;
+      createdAt = Date.now();
+      await db.put('meta', createdAt, 'createdAt');
+    }
+    S.createdAt = createdAt;
   } catch (err) {
     view.innerHTML = `<p class="empty">No se pudo abrir la base de datos: ${esc(err.message)}</p>`;
     return;
   }
   S.form = newForm();
   render();
+  requestPersist();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
   // historial de torneos: el que viene con la app (data/torneos.json) o el sincronizado, el que tenga más sets
   const [bundled, stored, sggConf] = await Promise.all([
