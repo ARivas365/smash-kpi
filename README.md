@@ -96,6 +96,7 @@ js/data.js          roster, stages y definición de KPIs
 js/sample.js        generador de datos de ejemplo
 js/stages.js        qué imagen usa cada stage
 img/stages/         imágenes de los stages (480 px, JPG)
+data/supermajor.json  historial de torneos de supermajor.gg (por set)
 icons/              íconos de la app
 FORMATO-ATAQUES.md  formato JSON para el futuro mod de PC
 ```
