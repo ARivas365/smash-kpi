@@ -78,17 +78,28 @@ function setTitle(t) { $('#title').textContent = t; }
 const backupOverdue = () => S.games.length > 0 && (!S.lastBackup || Date.now() - S.lastBackup > 7 * DAY);
 
 // ---------- hoja inferior (modal) ----------
-let sheetPushed = false, ignorePop = false, sheetResolve = null;
+let sheetPushed = false, ignorePop = false, sheetResolve = null, sheetOnClose = null;
 
-function openSheet(html) {
-  sheet.innerHTML = `<div class="sheet-backdrop" data-a="closeSheet"></div><div class="sheet-panel">${html}</div>`;
+// La pantalla completa sigue el alto visible (se achica cuando aparece el teclado).
+const fitFull = () => {
+  const panel = sheet.querySelector('.sheet-panel.full');
+  if (panel && window.visualViewport) panel.style.height = `${window.visualViewport.height}px`;
+};
+window.visualViewport?.addEventListener('resize', fitFull);
+
+// opts.full: ocupa toda la pantalla · opts.onClose: se llama al cerrar
+function openSheet(html, opts = {}) {
+  sheet.innerHTML = `<div class="sheet-backdrop" data-a="closeSheet"></div><div class="sheet-panel ${opts.full ? 'full' : ''}">${html}</div>`;
   sheet.classList.remove('hidden');
+  sheetOnClose = opts.onClose || null;
+  if (opts.full) fitFull();
   if (!sheetPushed) { history.pushState({ sheet: true }, ''); sheetPushed = true; }
 }
 function closeSheet(fromPop = false) {
   sheet.classList.add('hidden');
   sheet.innerHTML = '';
   if (sheetResolve) { const r = sheetResolve; sheetResolve = null; r(null); }
+  if (sheetOnClose) { const f = sheetOnClose; sheetOnClose = null; f(); }
   if (sheetPushed && !fromPop) { ignorePop = true; history.back(); }
   sheetPushed = false;
 }
@@ -1315,9 +1326,10 @@ function noteDetailHTML() {
     <div class="note-head"><button class="btn icon" data-a="noteBack" aria-label="volver">‹</button>
       <div><b>${title}</b><small class="muted">${isMu ? esc(muStats(base.myChar, base.oppChar)) : plStats(base.player)}</small></div></div>
     <section class="card">
-      <span class="lbl">${isMu ? 'Nota del matchup' : 'Nota del jugador'}</span>
-      <textarea class="inp note-text" data-in="noteText" rows="12" placeholder="${isMu ? 'Qué hace en neutral, cómo te mata, a qué % lo matás, qué stages banear…' : 'Qué personajes usa, sus hábitos, cómo se adapta…'}">${esc(n?.text || '')}</textarea>
-      <div class="row-between"><span class="muted small" id="noteStatus">${n ? 'Guardado · ' + fmtDate(st.ymd(new Date(n.updatedAt))) : 'Se guarda solo mientras escribís'}</span>
+      <div class="row-between"><span class="lbl">${isMu ? 'Nota del matchup' : 'Nota del jugador'}</span>
+        <button class="btn sm" data-a="noteFull" aria-label="pantalla completa">⛶ Pantalla completa</button></div>
+      <textarea class="inp note-text" data-in="noteText" rows="12" placeholder="${notePlaceholder(isMu)}">${esc(n?.text || '')}</textarea>
+      <div class="row-between"><span class="muted small note-status">${n ? 'Guardado · ' + fmtDate(st.ymd(new Date(n.updatedAt))) : 'Se guarda solo mientras escribís'}</span>
         ${n ? '<button class="btn sm danger" data-a="noteDelete">Borrar nota</button>' : '<button class="btn sm" data-a="noteTemplate">Usar plantilla</button>'}</div>
       ${isMu && mreDocFor(base.oppChar) ? `<div class="btn-row">
         <button class="btn sm" data-a="mreUse" data-v="${esc(base.oppChar)}">📘 Usar nota de Mr.E</button>
@@ -1376,7 +1388,32 @@ function mreReaderHTML(d) {
     <div class="note-head"><button class="btn icon" data-a="mreBack" aria-label="volver">‹</button>
       <div><b>${esc(d.title)}</b><small class="muted">Guía de Mr.E${d.chars ? ' · ' + esc(d.chars.join(', ')) : ''}</small></div></div>
     ${(d.chars || []).map(c => `<button class="btn" data-a="mreToNote" data-v="${esc(c)}">📝 ${getNote(noteId.mu(my, c)) ? 'Abrir' : 'Crear'} mi nota ${esc(my)} vs ${esc(c)}</button>`).join('')}
+    <button class="btn" data-a="mreFull" data-v="${esc(d.title)}">⛶ Leer en pantalla completa</button>
     <section class="card mre-text">${mreTextHTML(d.text)}</section>`;
+}
+
+const notePlaceholder = isMu => (isMu
+  ? 'Qué hace en neutral, cómo te mata, a qué % lo matás, qué stages banear…'
+  : 'Qué personajes usa, sus hábitos, cómo se adapta…');
+
+// lector a pantalla completa: el título queda fijo arriba
+function openReader(title, sub, bodyHTML, extra = '') {
+  openSheet(`<div class="sheet-head full-head"><div class="full-title"><b>${title}</b>${sub ? `<small class="muted">${sub}</small>` : ''}</div>
+    <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
+    <div class="sheet-body full-body">${bodyHTML}${extra}</div>`, { full: true });
+}
+
+// editor a pantalla completa de la nota abierta
+function openNoteFull() {
+  const base = S.noteOpen;
+  const isMu = base.kind === 'mu';
+  const current = view.querySelector('[data-in="noteText"]')?.value ?? getNote(base.id)?.text ?? '';
+  openSheet(`<div class="sheet-head full-head"><div class="full-title">
+      <b>${isMu ? `${esc(base.myChar)} vs ${esc(base.oppChar)}` : esc(base.player)}</b>
+      <small class="muted note-status">${isMu ? 'Nota del matchup' : 'Nota del jugador'} · se guarda sola</small></div>
+    <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
+    <div class="sheet-body full-body"><textarea class="inp note-text full-note" data-in="noteText" placeholder="${notePlaceholder(isMu)}">${esc(current)}</textarea></div>`,
+  { full: true, onClose: async () => { await flushNote(); if (S.tab === 'notas' && S.noteOpen) renderNotas(); } });
 }
 
 // agrega la guía de Mr.E a la nota abierta (reemplaza si está vacía, si no la suma al final)
@@ -1410,12 +1447,12 @@ function queueNote(text) {
   const base = S.noteOpen;
   notePending = () => saveNote(base, text);
   clearTimeout(noteTimer);
-  const status = $('#noteStatus');
-  if (status) status.textContent = 'Guardando…';
+  // el estado se muestra en la nota y en la pantalla completa
+  const setStatus = msg => document.querySelectorAll('.note-status').forEach(s => { s.textContent = msg; });
+  setStatus('Guardando…');
   noteTimer = setTimeout(async () => {
     await flushNote();
-    const s = $('#noteStatus');
-    if (s) s.textContent = text.trim() ? 'Guardado' : 'Nota vacía (se borra)';
+    setStatus(text.trim() ? 'Guardado' : 'Nota vacía (se borra)');
   }, 600);
 }
 async function flushNote() {
@@ -1479,11 +1516,13 @@ const actions = {
   mreUse: t => applyMreTemplate(t.dataset.v),
   mreView: t => {
     const d = mreDocFor(t.dataset.v);
-    if (!d) return;
-    openSheet(`<div class="sheet-head"><h2>📘 Mr.E: ${esc(d.title)}</h2>
-      <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
-      <div class="sheet-body mre-text">${mreTextHTML(d.text)}</div>`);
+    if (d) openReader(`📘 ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
   },
+  mreFull: t => {
+    const d = mreFind(t.dataset.v);
+    if (d) openReader(`📘 ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
+  },
+  noteFull: () => openNoteFull(),
   noteMy: t => { S.noteMy = t.dataset.v; renderNotas(); },
   noteOpen: t => { const n = getNote(t.dataset.v); if (n) openNote({ id: n.id, kind: n.kind, myChar: n.myChar, oppChar: n.oppChar, player: n.player }); },
   noteNewMu: () => openPicker('note'),
@@ -1529,10 +1568,8 @@ const actions = {
   noteView: t => {
     const n = getNote(t.dataset.v);
     if (!n) return;
-    openSheet(`<div class="sheet-head"><h2>${n.kind === 'mu' ? `${esc(n.myChar)} vs ${esc(n.oppChar)}` : esc(n.player)}</h2>
-      <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
-      <div class="sheet-body"><div class="note-read">${esc(n.text)}</div>
-      <button class="btn big" data-a="noteEditFrom" data-v="${esc(n.id)}">Editar en Notas</button></div>`);
+    openReader(n.kind === 'mu' ? `${esc(n.myChar)} vs ${esc(n.oppChar)}` : esc(n.player), n.kind === 'mu' ? 'Nota del matchup' : 'Nota del jugador',
+      `<div class="note-read">${esc(n.text)}</div>`, `<button class="btn big" data-a="noteEditFrom" data-v="${esc(n.id)}">Editar en Notas</button>`);
   },
   noteEditFrom: t => {
     const n = getNote(t.dataset.v);
@@ -1658,6 +1695,8 @@ function onClick(e) {
 }
 view.addEventListener('click', onClick);
 sheet.addEventListener('click', onClick);
+// escribir en la nota a pantalla completa
+sheet.addEventListener('input', e => { if (e.target.dataset.in === 'noteText') queueNote(e.target.value); });
 
 view.addEventListener('input', e => {
   const t = e.target;
