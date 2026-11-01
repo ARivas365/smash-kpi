@@ -1,6 +1,6 @@
 // Service worker: guarda la app en caché para que funcione sin internet.
 // Estrategia: responde desde la caché al instante y actualiza en segundo plano.
-const CACHE = 'smash-kpi-v7';
+const CACHE = 'smash-kpi-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -27,8 +27,11 @@ const ASSETS = [
   './img/stages/kalos.jpg',
 ];
 
+// cache: 'reload' evita copiar archivos viejos del caché HTTP del navegador al instalar una versión nueva
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(ASSETS.map(url => new Request(url, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -46,7 +49,9 @@ self.addEventListener('fetch', e => {
   e.respondWith(
     caches.open(CACHE).then(async cache => {
       const cached = await cache.match(key, { ignoreSearch: true });
-      const network = fetch(req)
+      // 'no-cache' revalida con el servidor en vez de usar el caché HTTP
+      const fresh = req.mode === 'navigate' ? new Request(req.url, { cache: 'no-cache' }) : new Request(req, { cache: 'no-cache' });
+      const network = fetch(fresh)
         .then(res => { if (res.ok) cache.put(key, res.clone()); return res; })
         .catch(() => cached);
       return cached || network;
