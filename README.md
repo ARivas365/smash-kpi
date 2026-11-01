@@ -22,7 +22,7 @@ Lo hacés una sola vez, desde la PC.
 ### c) Subir los archivos
 1. En la página del repositorio recién creado, hacé clic en el link **uploading an existing file**.
 2. Abrí en el Explorador de Windows la carpeta `smash-kpi` y **seleccioná todo lo que hay adentro** (no la carpeta en sí):
-   `css`, `icons`, `img`, `js`, `index.html`, `manifest.json`, `sw.js`, `README.md`, `FORMATO-ATAQUES.md`, `ejemplo-ataques.json`
+   `css`, `data`, `icons`, `img`, `js`, `index.html`, `manifest.json`, `sw.js`, `README.md`
 3. Arrastralo todo junto a la página de GitHub. Las carpetas se suben con su contenido.
 4. Abajo, botón verde **Commit changes**.
 
@@ -44,7 +44,7 @@ Lo hacés una sola vez, desde la PC.
 4. Elegí **"Instalar app"** o **"Agregar a la pantalla de inicio"** → **Instalar / Agregar**.
 5. Listo: aparece el ícono **Smash KPI** en la pantalla de inicio y abre a pantalla completa, sin barra del navegador.
 
-Los **Shields de Brave pueden quedar activados**: la app no usa nada externo (ni fuentes, ni CDN, ni analytics).
+Los **Shields de Brave pueden quedar activados**: la app no usa nada externo (ni fuentes, ni CDN, ni analytics). La única conexión de afuera es opcional: la API de start.gg, si cargás tu token para bajar tus torneos.
 
 Para probar que anda offline, poné el modo avión y abrila desde el ícono.
 
@@ -73,11 +73,16 @@ Los datos no se tocan al actualizar.
 | **Cargar** | Un game en menos de un minuto. Al guardar: **Siguiente game del set** (copia rival, personajes y set) o **Nuevo set**. En **Torneo** te guía con los baneos de stages (G1: piedra, papel o tijeras 1-2-1; G2+: el ganador banea 3 y el perdedor elige; con un solo Steve, elige el que no usa Steve). |
 | **Estadísticas** | Filtros, Foco de la semana, KPIs, patrones (por game, remontadas, quién eligió el stage, cansancio), gráficos por semana, **Matchups** y **Stages** (los peores en rojo) y **Cloud vs Steve**. |
 | **Historial** | Sets agrupados. Tocá uno para ver sus games, **editarlos**, **borrarlos** o agregar otro game. |
-| **Ajustes** | Respaldo JSON/CSV, importar, formato de ataques del mod, main/secundario, stocks y datos de ejemplo. |
+| **Ajustes** | Respaldo JSON/CSV, importar, torneos de start.gg (token y actualización), main/secundario, stocks y datos de ejemplo. |
 
 - ⚠ junto a un dato = menos de 5 games: no saques conclusiones todavía.
 - El CSV usa `;` como separador (lo abren directo Excel en español y Google Sheets).
 - Datos de ejemplo: **Ajustes → Cargar datos de ejemplo** para ver cómo queda, y después **Borrar datos de ejemplo** (no toca tus games reales).
+
+### Torneos de start.gg
+- La app trae tu historial de torneos (54 torneos, 560 games con stage y personajes) y lo suma a tus estadísticas. Filtrá por **Origen** para separarlo de lo que cargás a mano.
+- Para que se actualice sola: **Ajustes → Torneos de start.gg** → pegá un token de la API (start.gg → perfil → Developer Settings → Create new token) → **Guardar y actualizar**. Después busca torneos nuevos una vez por día al abrir la app, o cuando tocás **Actualizar ahora**.
+- El token queda guardado solo en el teléfono y no se incluye en los respaldos.
 
 ---
 
@@ -95,8 +100,8 @@ js/db.js            base de datos local (IndexedDB)
 js/data.js          roster, stages y definición de KPIs
 js/sample.js        generador de datos de ejemplo
 js/stages.js        qué imagen usa cada stage
+js/startgg.js       sincronización con la API de start.gg
 img/stages/         imágenes de los stages (480 px, JPG)
 data/torneos.json   historial de torneos de start.gg (sets y games)
 icons/              íconos de la app
-FORMATO-ATAQUES.md  formato JSON para el futuro mod de PC
 ```
