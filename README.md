@@ -1,0 +1,101 @@
+# Smash KPI
+
+App (PWA) para registrar y analizar KPIs de partidas de Super Smash Bros. Ultimate desde el teléfono.
+Funciona 100% offline, sin cuentas ni servidores: los datos quedan guardados **solo en tu teléfono** (IndexedDB).
+
+---
+
+## 1. Publicarla gratis en GitHub Pages
+
+Lo hacés una sola vez, desde la PC.
+
+### a) Crear la cuenta
+1. Entrá a <https://github.com> → **Sign up** y creá tu cuenta (es gratis).
+2. Tu **nombre de usuario** va a formar parte de la dirección de la app. Ejemplo: si sos `alvaro123`, la app va a quedar en `https://alvaro123.github.io/smash-kpi/`.
+
+### b) Crear el repositorio (la "carpeta" en GitHub)
+1. Arriba a la derecha, botón **+** → **New repository**.
+2. **Repository name**: `smash-kpi`
+3. Marcá **Public** (GitHub Pages gratis necesita que sea público. Solo se publica el código de la app; **tus partidas nunca se suben**: viven en el teléfono).
+4. Botón **Create repository**.
+
+### c) Subir los archivos
+1. En la página del repositorio recién creado, hacé clic en el link **uploading an existing file**.
+2. Abrí en el Explorador de Windows la carpeta `smash-kpi` y **seleccioná todo lo que hay adentro** (no la carpeta en sí):
+   `css`, `icons`, `img`, `js`, `index.html`, `manifest.json`, `sw.js`, `README.md`, `FORMATO-ATAQUES.md`, `ejemplo-ataques.json`
+3. Arrastralo todo junto a la página de GitHub. Las carpetas se suben con su contenido.
+4. Abajo, botón verde **Commit changes**.
+
+> Revisá que en el repositorio se vean `index.html` y las carpetas `css`, `img`, `js` e `icons` en la raíz. Si quedó todo adentro de una carpeta `smash-kpi/`, la app no va a abrir: borrá y volvé a subir solo el contenido.
+
+### d) Activar GitHub Pages
+1. En el repositorio: **Settings** (pestaña de arriba) → en el menú izquierdo, **Pages**.
+2. En **Source** elegí **Deploy from a branch**.
+3. En **Branch** elegí **main** y la carpeta **/ (root)** → **Save**.
+4. Esperá 1 o 2 minutos y recargá esa página: arriba va a aparecer *"Your site is live at https://TU-USUARIO.github.io/smash-kpi/"*.
+
+---
+
+## 2. Instalarla en el teléfono con Brave
+
+1. En el Samsung abrí **Brave** y entrá a `https://TU-USUARIO.github.io/smash-kpi/`.
+2. Esperá a que cargue del todo (unos segundos: en ese momento se guarda para funcionar sin internet).
+3. Tocá el menú **⋮** (abajo a la derecha o arriba, según cómo tengas configurada la barra).
+4. Elegí **"Instalar app"** o **"Agregar a la pantalla de inicio"** → **Instalar / Agregar**.
+5. Listo: aparece el ícono **Smash KPI** en la pantalla de inicio y abre a pantalla completa, sin barra del navegador.
+
+Los **Shields de Brave pueden quedar activados**: la app no usa nada externo (ni fuentes, ni CDN, ni analytics).
+
+Para probar que anda offline, poné el modo avión y abrila desde el ícono.
+
+### Cuidado con los datos
+- Los datos viven dentro de Brave. **Si borrás los datos de navegación de Brave** (o tenés activado "Borrar datos al salir"), **se pierden**.
+- Por eso la app te avisa en **Ajustes** si pasaron más de 7 días sin respaldo (aparece un punto amarillo en la pestaña).
+- **Ajustes → Respaldo completo → Compartir** abre el menú de compartir de Android: mandalo a WhatsApp (por ejemplo, a tu propio chat) o guardalo en Drive.
+- Para recuperar: **Ajustes → Importar → Elegir archivo JSON** y elegí *Combinar* o *Reemplazar*.
+- Si compartir un `.json` no está disponible, la app lo manda como `.json.txt`. Se importa igual.
+
+---
+
+## 3. Actualizar la app más adelante
+
+1. En GitHub, dentro del repositorio: **Add file → Upload files**, arrastrá los archivos modificados (con sus carpetas) → **Commit changes**.
+2. En el teléfono, abrí la app **dos veces**: la primera descarga la versión nueva en segundo plano y la segunda ya la muestra.
+
+Los datos no se tocan al actualizar.
+
+---
+
+## 4. Uso rápido
+
+| Pestaña | Para qué |
+|---|---|
+| **Cargar** | Un game en menos de un minuto. Al guardar: **Siguiente game del set** (copia rival, personajes y set) o **Nuevo set**. En **Torneo** te guía con los baneos de stages (G1: piedra, papel o tijeras 1-2-1; G2+: el ganador banea 3 y el perdedor elige; con un solo Steve, elige el que no usa Steve). |
+| **Estadísticas** | Filtros, Foco de la semana, KPIs, patrones (por game, remontadas, quién eligió el stage, cansancio), gráficos por semana, **Matchups** y **Stages** (los peores en rojo) y **Cloud vs Steve**. |
+| **Historial** | Sets agrupados. Tocá uno para ver sus games, **editarlos**, **borrarlos** o agregar otro game. |
+| **Ajustes** | Respaldo JSON/CSV, importar, formato de ataques del mod, main/secundario, stocks y datos de ejemplo. |
+
+- ⚠ junto a un dato = menos de 5 games: no saques conclusiones todavía.
+- El CSV usa `;` como separador (lo abren directo Excel en español y Google Sheets).
+- Datos de ejemplo: **Ajustes → Cargar datos de ejemplo** para ver cómo queda, y después **Borrar datos de ejemplo** (no toca tus games reales).
+
+---
+
+## 5. Estructura
+
+```
+index.html          pantalla principal
+manifest.json       datos para instalarla como app
+sw.js               service worker (modo offline)
+css/app.css         estilos (tema oscuro)
+js/app.js           interfaz y lógica de pantallas
+js/stats.js         cálculo de KPIs
+js/charts.js        gráficos SVG (sin librerías)
+js/db.js            base de datos local (IndexedDB)
+js/data.js          roster, stages y definición de KPIs
+js/sample.js        generador de datos de ejemplo
+js/stages.js        qué imagen usa cada stage
+img/stages/         imágenes de los stages (480 px, JPG)
+icons/              íconos de la app
+FORMATO-ATAQUES.md  formato JSON para el futuro mod de PC
+```
