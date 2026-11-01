@@ -22,7 +22,7 @@ const S = {
   persisted: false,
   ext: null,          // historial de torneos (start.gg)
   // conexión con start.gg: se guarda aparte de settings para que el token no vaya en los respaldos
-  sgg: { token: '', playerId: 71176, auto: true, lastSync: null, lastError: null },
+  sgg: { token: '', playerId: null, gamerTag: '', auto: true, lastSync: null, lastError: null },
   syncing: false,
   syncMsg: '',
   extRange: 'all',
@@ -789,7 +789,10 @@ function breakdownHTML(fg, setMap, { keyFn, title, thumb, what }) {
 // Historial de torneos importado de supermajor: resultados por set (sin detalle por game).
 function torneosHTML() {
   const d = S.ext;
-  if (!d) return '<p class="empty">No se pudo cargar el historial de torneos.</p>';
+  if (!d) {
+    return `<div class="empty-state"><p>Todavía no hay torneos. Conectá tu cuenta de start.gg y la app baja tus resultados sola.</p>
+      <button class="btn big primary" data-a="go" data-v="ajustes">Ir a Ajustes</button></div>`;
+  }
   const months = { all: null, year: 12, half: 6 }[S.extRange];
   const cutoff = months ? (() => { const x = new Date(); x.setMonth(x.getMonth() - months); return st.ymd(x); })() : '';
   const events = d.events.filter(e => e.date >= cutoff).sort((a, b) => b.date.localeCompare(a.date));
@@ -1168,7 +1171,8 @@ function sggCardHTML() {
     ${S.ext ? `<p class="muted small">${imported} games importados de ${S.ext.events.length} torneos · datos del ${fmtDate(S.ext.fetchedAt)}.
       Tienen stage, personajes y ganador; los stocks solo cuando se reportaron.</p>` : ''}
     ${c.token ? `
-      <p class="small">🔑 Token guardado en este teléfono · última actualización: <b>${when}</b></p>
+      <p class="small">🔑 Conectado${c.gamerTag ? ` como <b>${esc(c.gamerTag)}</b>` : ''} · última actualización: <b>${when}</b></p>
+      ${!S.ext && !S.syncing ? '<p class="muted small">Todavía no bajaste tus torneos: tocá Actualizar ahora (la primera vez tarda unos segundos).</p>' : ''}
       ${c.lastError ? `<p class="warn-text small">⚠ La última actualización falló: ${esc(c.lastError)}</p>` : ''}
       ${S.syncing ? `<p class="small">⏳ ${esc(S.syncMsg)}</p>` : '<button class="btn big primary" data-a="sggSync">Actualizar ahora</button>'}
       <span class="lbl sub">Actualizar solo (una vez por día, al abrir la app)</span>
@@ -1178,13 +1182,11 @@ function sggCardHTML() {
       </div>
       <button class="btn ghost" data-a="sggForget">Borrar token</button>`
     : `
-      <p class="small">Para que la app baje tus torneos nuevos sola, pegá un token de la API de start.gg.
-        Se guarda <b>solo en este teléfono</b> y no va en los respaldos.</p>
+      <p class="small">Para traer tus torneos (stage, personajes y resultado de cada game) y que se actualicen solos, pegá un token de la API de start.gg.
+        La app detecta sola tu perfil. El token se guarda <b>solo en este teléfono</b> y no va en los respaldos.</p>
       <p class="muted small">Cómo crearlo: start.gg → tu perfil → <b>Developer Settings</b> → <b>Create new token</b>.</p>
       <input class="inp" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-in="sggToken" placeholder="Pegá el token y tocá Guardar">
-      <button class="btn big primary" data-a="sggSaveToken">Guardar y actualizar</button>`}
-    <label class="f-field"><span>ID de jugador en start.gg</span>
-      <input class="inp" type="text" inputmode="numeric" data-in="sggPlayer" value="${esc(c.playerId)}"></label>
+      <button class="btn big primary" data-a="sggSaveToken">Guardar y bajar mis torneos</button>`}
     ${imported
       ? '<button class="btn" data-a="sggRemove">Quitar los games importados</button>'
       : S.ext ? '<button class="btn" data-a="sggImport">Importar games de torneos</button>' : ''}
@@ -1606,10 +1608,10 @@ const actions = {
     const token = view.querySelector('[data-in="sggToken"]').value.trim();
     if (!/^[a-z0-9]{20,}$/i.test(token)) { toast('Eso no parece un token de start.gg', 'err'); return; }
     try {
-      const name = await sgg.checkPlayer(token, S.sgg.playerId);
+      const me = await identify(token);
       S.sgg.token = token;
       await saveSgg();
-      toast(`Conectado: ${name}`, 'ok');
+      toast(`Conectado como ${me.gamerTag}`, 'ok');
       runSync(true);
     } catch (err) { toast('No se pudo conectar: ' + err.message, 'err'); }
   },
@@ -1733,10 +1735,6 @@ view.addEventListener('change', async e => {
     if (S.form && !S.editingId && !S.form.rival) S.form.myChar = S.settings.main;
     toast('Guardado', 'ok');
   } else if (k === 'importFile' && t.files[0]) { await importFile(t.files[0]); t.value = ''; }
-  else if (k === 'sggPlayer') {
-    const id = Number(t.value.replace(/\D/g, ''));
-    if (id) { S.sgg.playerId = id; S.sgg.lastSync = null; await saveSgg(); toast('ID de jugador guardado', 'ok'); }
-  }
 });
 
 // recuerda si la sección de VOD quedó abierta o cerrada (toggle no burbujea: se escucha en captura)
@@ -1788,14 +1786,10 @@ async function init() {
   requestPersist();
   loadMre();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  // historial de torneos: el que viene con la app (data/torneos.json) o el sincronizado, el que tenga más sets
-  const [bundled, stored, sggConf] = await Promise.all([
-    fetch('data/torneos.json').then(r => (r.ok ? r.json() : null)).catch(() => null),
-    db.get('meta', 'sggExt'), db.get('meta', 'sgg'),
-  ]);
+  // historial de torneos: solo el que bajó este teléfono con su propio token (la app no trae datos de nadie)
+  const [stored, sggConf] = await Promise.all([db.get('meta', 'sggExt'), db.get('meta', 'sgg')]);
   Object.assign(S.sgg, sggConf || {});
-  const valid = d => d?.format === 'smash-kpi-torneos';
-  S.ext = valid(stored) && (!valid(bundled) || stored.sets.length >= bundled.sets.length) ? stored : valid(bundled) ? bundled : null;
+  S.ext = stored?.format === 'smash-kpi-torneos' ? stored : null;
   if (S.ext) {
     // cada versión nueva agrega sus games una vez (salvo que los hayas quitado en Ajustes)
     const done = await db.get('meta', 'sggImport');
@@ -1810,6 +1804,26 @@ async function init() {
 const extVersion = () => `${S.ext.fetchedAt}:${S.ext.games.length}`;
 const saveSgg = () => db.put('meta', S.sgg, 'sgg');
 
+// Averigua de quién es el token. Si es otra cuenta, quita los torneos de la anterior.
+async function identify(token) {
+  const me = await sgg.whoAmI(token);
+  // dueño de los torneos guardados; las versiones viejas traían incluidos los de Zephyr (71176)
+  const prev = S.sgg.playerId ?? S.ext?.playerId ?? (S.games.some(g => g.imported) ? 71176 : null);
+  if (prev && prev !== me.id) {
+    const ids = S.games.filter(g => g.imported).map(g => g.id);
+    await db.delMany('games', ids);
+    S.games = S.games.filter(g => !g.imported);
+    S.ext = null;
+    await db.del('meta', 'sggExt');
+    await db.del('meta', 'sggImport');
+    S.sgg.lastSync = null;
+    toast('Cuenta distinta: se quitaron los torneos de la cuenta anterior');
+  }
+  S.sgg.playerId = me.id;
+  S.sgg.gamerTag = me.gamerTag;
+  return me;
+}
+
 async function runSync(manual) {
   if (S.syncing) return;
   if (!S.sgg.token) { toast('Primero guardá tu token de start.gg', 'err'); return; }
@@ -1817,11 +1831,12 @@ async function runSync(manual) {
   S.syncMsg = 'Buscando torneos nuevos…';
   if (S.tab === 'ajustes') renderAjustes();
   try {
+    if (!S.sgg.playerId) await identify(S.sgg.token);
     const add = await sgg.fetchNew({
       token: S.sgg.token, playerId: S.sgg.playerId, ext: S.ext,
       onProgress: (p, total) => { S.syncMsg = `Buscando torneos nuevos… página ${p} de ${total}`; if (S.tab === 'ajustes') renderAjustes(); },
     });
-    S.ext = sgg.mergeExt(S.ext, add, today());
+    S.ext = sgg.mergeExt(S.ext, add, today(), S.sgg.playerId);
     await db.put('meta', S.ext, 'sggExt');
     const importOn = (await db.get('meta', 'sggImport')) !== 'off';
     if (importOn) await importStartgg('never');
