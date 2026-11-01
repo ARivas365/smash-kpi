@@ -1,8 +1,9 @@
 import * as db from './db.js';
-import { ROSTER, STAGE_GROUPS, STARTERS, LEGAL, TYPES, TYPE_LABEL, KPIS, ATTACK_EXAMPLE } from './data.js';
+import { ROSTER, STAGE_GROUPS, STARTERS, LEGAL, TYPES, TYPE_LABEL, KPIS } from './data.js';
 import * as st from './stats.js';
 import { lineChart } from './charts.js';
 import { stageArt } from './stages.js';
+import * as sgg from './startgg.js';
 
 const APP_VERSION = '1.0.0';
 const DAY = 86400000;
@@ -15,12 +16,15 @@ const sheet = $('#sheet');
 const S = {
   tab: 'cargar',
   games: [],
-  attackLogs: [],
   settings: { main: 'Cloud', second: 'Steve', casualStocks: 3, defaultType: 'torneo', stageStyle: 'img' },
   lastBackup: null,
   focusKpi: 'winGames',
   persisted: false,
-  ext: null,          // historial de torneos (supermajor)
+  ext: null,          // historial de torneos (start.gg)
+  // conexión con start.gg: se guarda aparte de settings para que el token no vaya en los respaldos
+  sgg: { token: '', playerId: 71176, auto: true, lastSync: null, lastError: null },
+  syncing: false,
+  syncMsg: '',
   extRange: 'all',
   extAllEvents: false,
   form: null,
@@ -482,7 +486,7 @@ function cleanGame(f) {
     killPercents: nums(f.killPercents), deathPercents: nums(f.deathPercents),
     recoveryDeaths: f.recoveryDeaths,
     limitsCharged: f.limitsCharged, limitsUsed: f.limitsUsed, limitsConverted: f.limitsConverted,
-    notes: f.notes.trim(), attacks: f.attacks, sample: f.sample, updatedAt: Date.now(),
+    notes: f.notes.trim(), sample: f.sample, updatedAt: Date.now(),
     rpsWinner: f.type === 'torneo' ? f.rpsWinner : null, prevWinner: f.type === 'torneo' ? f.prevWinner : null,
     bans: f.type === 'torneo' ? f.bans : [], stagePicker: f.stage ? f.stagePicker : null,
     vodSkip: !!f.vodSkip,
@@ -502,7 +506,6 @@ async function saveGame() {
   if (missing.length) { toast('Falta: ' + missing.join(', '), 'err'); return; }
   syncPercents(f);
   const g = cleanGame(f);
-  linkPendingAttacks(g);
   await db.put('games', g);
   const i = S.games.findIndex(x => x.id === g.id);
   if (i >= 0) S.games[i] = g; else S.games.push(g);
@@ -877,7 +880,6 @@ function renderStats() {
 function gameLine(g) {
   const kp = (g.killPercents || []).filter(v => v != null);
   const dp = (g.deathPercents || []).filter(v => v != null);
-  const atk = g.attacks?.me ? Object.entries(g.attacks.me).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([m, c]) => `${m} ${c}`).join(', ') : '';
   const vod = needsVod(g);
   return `<div class="game ${g.result === 'W' ? 'w' : 'l'}">
     <div class="g-top"><b class="g-res">${g.result}</b><span>G${g.gameNum} · ${esc(g.stage || 'sin stage')}</span>
@@ -887,7 +889,6 @@ function gameLine(g) {
       ${kp.length ? `<br>Maté a: ${kp.join('%, ')}%` : ''}${dp.length ? `<br>Morí a: ${dp.join('%, ')}%` : ''}
       ${g.recoveryDeaths ? `<br>Muertes por recovery: ${g.recoveryDeaths}` : ''}
       ${g.myChar === 'Cloud' && !(g.imported && !g.limitsCharged) ? `<br>Limit: ${g.limitsCharged} cargados · ${g.limitsUsed} usados · ${g.limitsConverted} dieron kill` : ''}
-      ${atk ? `<br>Ataques (mod): ${esc(atk)}` : ''}
       ${g.notes ? `<br><i>“${esc(g.notes)}”</i>` : ''}</div>
     ${vod ? `<div class="g-actions"><button class="btn sm primary" data-a="vodFill" data-v="${g.id}">Completar %</button>
       <button class="btn sm ghost" data-a="vodSkip" data-v="${g.id}">No lo voy a revisar</button></div>` : ''}
@@ -945,7 +946,7 @@ function renderHist() {
 
 // ---------- ajustes, respaldo e importación ----------
 function backupData() {
-  return { app: 'smash-kpi', version: 1, exportedAt: new Date().toISOString(), settings: S.settings, games: S.games, attackLogs: S.attackLogs };
+  return { app: 'smash-kpi', version: 1, exportedAt: new Date().toISOString(), settings: S.settings, games: S.games };
 }
 
 function csvData() {
@@ -1022,7 +1023,6 @@ async function importFile(file) {
   let data;
   try { data = JSON.parse((await file.text()).replace(/^﻿/, '')); }
   catch { toast('El archivo no es un JSON válido', 'err'); return; }
-  if (data.format === 'smash-kpi-attacks') return importAttacks(data);
   if (data.app !== 'smash-kpi' || !Array.isArray(data.games)) { toast('No es un respaldo de Smash KPI', 'err'); return; }
   const games = data.games.filter(g => g && g.id).map(normalizeGame);
   const mode = await ask('Importar respaldo', `El archivo tiene <b>${games.length}</b> games. Ahora tenés <b>${S.games.length}</b>.`, [
@@ -1030,58 +1030,12 @@ async function importFile(file) {
     { value: 'replace', label: 'Reemplazar todo', cls: 'danger' },
   ]);
   if (!mode) return;
-  if (mode === 'replace') { await db.clear('games'); await db.clear('attackLogs'); S.games = []; S.attackLogs = []; }
+  if (mode === 'replace') { await db.clear('games'); S.games = []; }
   await db.putMany('games', games);
-  if (Array.isArray(data.attackLogs)) await db.putMany('attackLogs', data.attackLogs.filter(l => l && l.id));
   if (data.settings && mode === 'replace') { Object.assign(S.settings, data.settings); await db.put('meta', S.settings, 'settings'); }
   S.games = await db.getAll('games');
-  S.attackLogs = await db.getAll('attackLogs');
   render();
   toast(`${games.length} games importados`, 'ok');
-}
-
-function findGameForAttack(m) {
-  if (m.gameId) return S.games.find(g => g.id === m.gameId) || null;
-  const t = Date.parse(m.endedAt || m.startedAt);
-  if (!isFinite(t)) return null;
-  let best = null, bestDiff = 25 * 60000;
-  for (const g of S.games) {
-    if (m.myChar && g.myChar !== m.myChar) continue;
-    if (m.oppChar && g.oppChar !== m.oppChar) continue;
-    const diff = Math.abs((g.ts || 0) - t);
-    if (diff < bestDiff) { best = g; bestDiff = diff; }
-  }
-  return best;
-}
-
-const attackPayload = (m, source) => ({ me: m.attacks?.me || {}, opp: m.attacks?.opp || {}, source: source || 'mod', importedAt: Date.now() });
-
-async function importAttacks(data) {
-  const matches = Array.isArray(data.matches) ? data.matches : [];
-  let linked = 0;
-  const pending = [];
-  for (const m of matches) {
-    const g = findGameForAttack(m);
-    if (g) { g.attacks = attackPayload(m, data.source); await db.put('games', g); linked++; }
-    else pending.push({ id: m.id || uid(), source: data.source, ...m, importedAt: Date.now() });
-  }
-  if (pending.length) { await db.putMany('attackLogs', pending); S.attackLogs.push(...pending); }
-  render();
-  toast(`Ataques: ${linked} asociados a games, ${pending.length} pendientes`, 'ok');
-}
-
-// Al guardar un game, intenta asociarle conteos de ataques pendientes.
-function linkPendingAttacks(g) {
-  if (!S.attackLogs.length || g.attacks) return;
-  const saved = S.games;
-  S.games = [g];
-  const log = S.attackLogs.find(m => findGameForAttack(m));
-  S.games = saved;
-  if (log) {
-    g.attacks = attackPayload(log, log.source);
-    S.attackLogs = S.attackLogs.filter(l => l !== log);
-    db.del('attackLogs', log.id);
-  }
 }
 
 function requestPersist() {
@@ -1110,25 +1064,11 @@ function renderAjustes() {
 
   <section class="card">
     <span class="lbl">Importar</span>
-    <p class="muted small">Respaldo JSON de esta app, o JSON de ataques del mod de PC.</p>
+    <p class="muted small">Un respaldo JSON exportado desde esta app.</p>
     <label class="btn big file-btn">Elegir archivo JSON<input type="file" accept=".json,.txt,application/json,text/plain" data-in="importFile" hidden></label>
   </section>
 
-  <section class="card">
-    <span class="lbl">Torneos de start.gg</span>
-    ${S.ext ? `<p class="muted small">${S.games.filter(g => g.imported).length} games importados de ${S.ext.events.length} torneos · datos del ${fmtDate(S.ext.fetchedAt)}.
-      Tienen stage, personajes y ganador; los stocks solo cuando se reportaron.</p>
-      ${S.games.some(g => g.imported)
-        ? '<button class="btn" data-a="sggRemove">Quitar los games importados</button>'
-        : '<button class="btn" data-a="sggImport">Importar games de torneos</button>'}`
-      : '<p class="muted small">Cargando…</p>'}
-  </section>
-
-  <section class="card">
-    <span class="lbl">Ataques por partida (mod de PC)</span>
-    <p class="muted small">${S.games.filter(g => g.attacks).length} games con ataques · ${S.attackLogs.length} registros esperando un game que coincida.</p>
-    <button class="btn" data-a="attackFormat">Ver formato del JSON</button>
-  </section>
+  ${sggCardHTML()}
 
   <section class="card">
     <span class="lbl">Preferencias</span>
@@ -1154,6 +1094,39 @@ function renderAjustes() {
     </div>
   </section>
   <p class="muted small center">Smash KPI v${APP_VERSION} · funciona sin internet · tus datos no salen del teléfono</p>`;
+}
+
+function sggCardHTML() {
+  const c = S.sgg;
+  const ago = c.lastSync ? Math.round((Date.now() - c.lastSync) / 3600000) : null;
+  const when = ago == null ? 'nunca' : ago < 1 ? 'hace menos de 1 hora' : ago < 48 ? `hace ${ago} h` : `hace ${Math.round(ago / 24)} días`;
+  const imported = S.games.filter(g => g.imported).length;
+  return `<section class="card">
+    <span class="lbl">Torneos de start.gg</span>
+    ${S.ext ? `<p class="muted small">${imported} games importados de ${S.ext.events.length} torneos · datos del ${fmtDate(S.ext.fetchedAt)}.
+      Tienen stage, personajes y ganador; los stocks solo cuando se reportaron.</p>` : ''}
+    ${c.token ? `
+      <p class="small">🔑 Token guardado en este teléfono · última actualización: <b>${when}</b></p>
+      ${c.lastError ? `<p class="warn-text small">⚠ La última actualización falló: ${esc(c.lastError)}</p>` : ''}
+      ${S.syncing ? `<p class="small">⏳ ${esc(S.syncMsg)}</p>` : '<button class="btn big primary" data-a="sggSync">Actualizar ahora</button>'}
+      <span class="lbl sub">Actualizar solo (una vez por día, al abrir la app)</span>
+      <div class="chips nums">
+        <button class="chip ${c.auto ? 'on' : ''}" data-a="sggAuto" data-v="on">Sí</button>
+        <button class="chip ${!c.auto ? 'on' : ''}" data-a="sggAuto" data-v="off">No</button>
+      </div>
+      <button class="btn ghost" data-a="sggForget">Borrar token</button>`
+    : `
+      <p class="small">Para que la app baje tus torneos nuevos sola, pegá un token de la API de start.gg.
+        Se guarda <b>solo en este teléfono</b> y no va en los respaldos.</p>
+      <p class="muted small">Cómo crearlo: start.gg → tu perfil → <b>Developer Settings</b> → <b>Create new token</b>.</p>
+      <input class="inp" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" data-in="sggToken" placeholder="Pegá el token y tocá Guardar">
+      <button class="btn big primary" data-a="sggSaveToken">Guardar y actualizar</button>`}
+    <label class="f-field"><span>ID de jugador en start.gg</span>
+      <input class="inp" type="text" inputmode="numeric" data-in="sggPlayer" value="${esc(c.playerId)}"></label>
+    ${imported
+      ? '<button class="btn" data-a="sggRemove">Quitar los games importados</button>'
+      : S.ext ? '<button class="btn" data-a="sggImport">Importar games de torneos</button>' : ''}
+  </section>`;
 }
 
 async function loadSample() {
@@ -1216,7 +1189,27 @@ const actions = {
     renderStats();
   },
   statsTab: t => { S.statsTab = t.dataset.v; renderStats(); },
-  sggImport: async () => { await importStartgg(`${S.ext.fetchedAt}:${S.ext.games.length}`); renderAjustes(); },
+  sggImport: async () => { await importStartgg('always'); renderAjustes(); },
+  sggSync: () => runSync(true),
+  sggSaveToken: async () => {
+    const token = view.querySelector('[data-in="sggToken"]').value.trim();
+    if (!/^[a-z0-9]{20,}$/i.test(token)) { toast('Eso no parece un token de start.gg', 'err'); return; }
+    try {
+      const name = await sgg.checkPlayer(token, S.sgg.playerId);
+      S.sgg.token = token;
+      await saveSgg();
+      toast(`Conectado: ${name}`, 'ok');
+      runSync(true);
+    } catch (err) { toast('No se pudo conectar: ' + err.message, 'err'); }
+  },
+  sggAuto: t => { S.sgg.auto = t.dataset.v === 'on'; saveSgg(); renderAjustes(); },
+  sggForget: async () => {
+    const ok = await ask('Borrar token', 'Se borra el token de este teléfono. Los torneos ya bajados quedan.', [{ value: 'y', label: 'Borrar token', cls: 'danger' }]);
+    if (!ok) return;
+    S.sgg.token = ''; S.sgg.lastError = null;
+    await saveSgg();
+    renderAjustes();
+  },
   sggRemove: async () => {
     const ids = S.games.filter(g => g.imported).map(g => g.id);
     const ok = await ask('Quitar torneos importados', `Se van a quitar <b>${ids.length}</b> games importados de start.gg (también los % u openings que les hayas agregado). Tus games cargados a mano no se tocan.`,
@@ -1257,14 +1250,6 @@ const actions = {
     toast('Game borrado');
   },
   export: t => doExport(t.dataset.k, t.dataset.m),
-  attackFormat: () => {
-    openSheet(`<div class="sheet-head"><h2>Formato de ataques</h2><button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
-      <div class="sheet-body"><p class="small">El mod debe generar un JSON así. Cada partida se asocia a un game por <code>gameId</code>,
-      o si no lo tiene, por fecha/hora (<code>endedAt</code>, ±25 min) y personajes. Si todavía no cargaste ese game, queda pendiente y se asocia cuando lo cargues.</p>
-      <pre class="code">${esc(JSON.stringify(ATTACK_EXAMPLE, null, 2))}</pre>
-      <button class="btn big" data-a="dlExample">Descargar ejemplo</button></div>`);
-  },
-  dlExample: () => shareOrDownload('ejemplo-ataques.json', 'application/json', JSON.stringify(ATTACK_EXAMPLE, null, 2), 'download'),
   setStocks: t => {
     S.settings.casualStocks = Number(t.dataset.v);
     db.put('meta', S.settings, 'settings');
@@ -1284,8 +1269,8 @@ const actions = {
     const ok = await ask('Borrar todo', `Se van a borrar <b>${S.games.length}</b> games de este teléfono. No se puede deshacer. ¿Exportaste un respaldo?`,
       [{ value: 'y', label: 'Sí, borrar todo', cls: 'danger' }]);
     if (!ok) return;
-    await db.clear('games'); await db.clear('attackLogs');
-    S.games = []; S.attackLogs = []; S.lastSaved = null; S.form = newForm();
+    await db.clear('games');
+    S.games = []; S.lastSaved = null; S.form = newForm();
     render();
     toast('Datos borrados');
   },
@@ -1331,6 +1316,10 @@ view.addEventListener('change', async e => {
     if (S.form && !S.editingId && !S.form.rival) S.form.myChar = S.settings.main;
     toast('Guardado', 'ok');
   } else if (k === 'importFile' && t.files[0]) { await importFile(t.files[0]); t.value = ''; }
+  else if (k === 'sggPlayer') {
+    const id = Number(t.value.replace(/\D/g, ''));
+    if (id) { S.sgg.playerId = id; S.sgg.lastSync = null; await saveSgg(); toast('ID de jugador guardado', 'ok'); }
+  }
 });
 
 // recuerda si la sección de VOD quedó abierta o cerrada (toggle no burbujea: se escucha en captura)
@@ -1354,11 +1343,11 @@ document.querySelector('.tabbar').addEventListener('click', e => {
 
 async function init() {
   try {
-    const [games, logs, settings, lastBackup, focusKpi] = await Promise.all([
-      db.getAll('games'), db.getAll('attackLogs'), db.get('meta', 'settings'), db.get('meta', 'lastBackup'), db.get('meta', 'focusKpi'),
+    const [games, settings, lastBackup, focusKpi] = await Promise.all([
+      db.getAll('games'), db.get('meta', 'settings'), db.get('meta', 'lastBackup'), db.get('meta', 'focusKpi'),
     ]);
-    S.games = games;
-    S.attackLogs = logs;
+    // quita restos del formato de ataques que ya no se usa
+    S.games = games.map(g => { if ('attacks' in g) delete g.attacks; return g; });
     Object.assign(S.settings, settings || {});
     S.lastBackup = lastBackup || null;
     if (focusKpi && KPIS[focusKpi]) S.focusKpi = focusKpi;
@@ -1370,16 +1359,54 @@ async function init() {
   S.form = newForm();
   render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  // historial de torneos de start.gg, incluido en la app (data/torneos.json)
-  fetch('data/torneos.json').then(r => (r.ok ? r.json() : null)).catch(() => null).then(async d => {
-    if (d?.format !== 'smash-kpi-torneos') return;
-    S.ext = d;
-    // cada versión nueva del archivo agrega sus games una vez (salvo que los hayas quitado en Ajustes)
-    const version = `${d.fetchedAt}:${d.games.length}`;
+  // historial de torneos: el que viene con la app (data/torneos.json) o el sincronizado, el que tenga más sets
+  const [bundled, stored, sggConf] = await Promise.all([
+    fetch('data/torneos.json').then(r => (r.ok ? r.json() : null)).catch(() => null),
+    db.get('meta', 'sggExt'), db.get('meta', 'sgg'),
+  ]);
+  Object.assign(S.sgg, sggConf || {});
+  const valid = d => d?.format === 'smash-kpi-torneos';
+  S.ext = valid(stored) && (!valid(bundled) || stored.sets.length >= bundled.sets.length) ? stored : valid(bundled) ? bundled : null;
+  if (S.ext) {
+    // cada versión nueva agrega sus games una vez (salvo que los hayas quitado en Ajustes)
     const done = await db.get('meta', 'sggImport');
-    if (done !== version && done !== 'off') await importStartgg(version, false);
+    if (done !== extVersion() && done !== 'off') await importStartgg('ifAny');
     if (S.tab !== 'cargar') render();
-  });
+  }
+  // actualización automática: una vez por día si hay token e internet
+  const due = !S.sgg.lastSync || Date.now() - S.sgg.lastSync > DAY;
+  if (S.sgg.auto && S.sgg.token && navigator.onLine && due) runSync(false);
+}
+
+const extVersion = () => `${S.ext.fetchedAt}:${S.ext.games.length}`;
+const saveSgg = () => db.put('meta', S.sgg, 'sgg');
+
+async function runSync(manual) {
+  if (S.syncing) return;
+  if (!S.sgg.token) { toast('Primero guardá tu token de start.gg', 'err'); return; }
+  S.syncing = true;
+  S.syncMsg = 'Buscando torneos nuevos…';
+  if (S.tab === 'ajustes') renderAjustes();
+  try {
+    const add = await sgg.fetchNew({
+      token: S.sgg.token, playerId: S.sgg.playerId, ext: S.ext,
+      onProgress: (p, total) => { S.syncMsg = `Buscando torneos nuevos… página ${p} de ${total}`; if (S.tab === 'ajustes') renderAjustes(); },
+    });
+    S.ext = sgg.mergeExt(S.ext, add, today());
+    await db.put('meta', S.ext, 'sggExt');
+    const importOn = (await db.get('meta', 'sggImport')) !== 'off';
+    if (importOn) await importStartgg('never');
+    S.sgg.lastSync = Date.now();
+    S.sgg.lastError = null;
+    if (add.sets.length || manual) toast(add.sets.length ? `start.gg: ${add.sets.length} sets nuevos (${add.games.length} games)` : 'start.gg: no hay torneos nuevos', 'ok');
+  } catch (err) {
+    S.sgg.lastError = err.message;
+    if (manual) toast('No se pudo actualizar: ' + err.message, 'err');
+  } finally {
+    S.syncing = false;
+    await saveSgg();
+    if (S.tab !== 'cargar') render();
+  }
 }
 
 const expandImported = g => ({
@@ -1389,12 +1416,13 @@ const expandImported = g => ({
   stocksUnknown: g.myStocksLeft == null || g.oppStocksLeft == null,
 });
 
-async function importStartgg(version, announce = true) {
+// toast: 'always' (botón), 'ifAny' (al abrir la app) o 'never' (lo avisa la sincronización)
+async function importStartgg(toastMode = 'ifAny') {
   const have = new Set(S.games.map(g => g.id));
   const add = S.ext.games.filter(g => !have.has(g.id)).map(expandImported);
   if (add.length) { await db.putMany('games', add); S.games.push(...add); }
-  await db.put('meta', version, 'sggImport');
-  if (add.length || announce) toast(`${add.length} games de torneos importados de start.gg`, 'ok');
+  await db.put('meta', extVersion(), 'sggImport');
+  if (toastMode === 'always' || (toastMode === 'ifAny' && add.length)) toast(`${add.length} games de torneos importados de start.gg`, 'ok');
 }
 
 init();
