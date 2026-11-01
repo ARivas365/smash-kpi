@@ -30,23 +30,29 @@ async function gql(token, query, variables = {}, tries = 3) {
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
     body: JSON.stringify({ query, variables }),
   });
-  if (res.status === 401 || res.status === 403) throw new Error('el token no es válido o venció');
   if (res.status === 429 && tries > 1) { await sleep(15000); return gql(token, query, variables, tries - 1); }
-  if (!res.ok) throw new Error(`start.gg respondió ${res.status}`);
+  if (!res.ok) {
+    // un token borrado o vencido vuelve como 400 "Invalid authentication token"
+    const msg = await res.json().then(j => j.message || '').catch(() => '');
+    if (res.status === 401 || res.status === 403 || /auth|token/i.test(msg)) throw new Error('el token no es válido o venció (creá uno nuevo en start.gg)');
+    throw new Error(`start.gg respondió ${res.status}${msg ? ': ' + msg : ''}`);
+  }
   const json = await res.json();
   if (json.errors?.length) throw new Error(json.errors[0].message);
   return json.data;
 }
 
-export async function checkPlayer(token, playerId) {
-  const d = await gql(token, 'query($id: ID!) { player(id: $id) { id gamerTag } }', { id: playerId });
-  if (!d.player) throw new Error('no existe ese jugador');
-  return d.player.gamerTag;
+// El dueño del token: así no hace falta buscar el ID de jugador a mano.
+export async function whoAmI(token) {
+  const d = await gql(token, 'query { currentUser { id player { id gamerTag prefix } } }');
+  const p = d.currentUser?.player;
+  if (!p) throw new Error('esa cuenta de start.gg no tiene un perfil de jugador');
+  return { id: p.id, gamerTag: p.gamerTag };
 }
 
 // Baja los sets nuevos (los más recientes primero) hasta llegar a una página donde todos ya son conocidos.
 // start.gg no los ordena exactamente por fecha, así que una página mezclada no alcanza para frenar.
-// Devuelve los eventos, sets y games nuevos en el formato de data/torneos.json.
+// Devuelve los eventos, sets y games nuevos (formato 'smash-kpi-torneos', se guarda en meta 'sggExt').
 export async function fetchNew({ token, playerId, ext, onProgress }) {
   const known = new Set((ext?.sets || []).map(s => s.id));
   const raw = [];
@@ -135,8 +141,9 @@ export async function fetchNew({ token, playerId, ext, onProgress }) {
 }
 
 // Une lo nuevo con el historial que ya había (los eventos repetidos se actualizan).
-export function mergeExt(ext, add, today) {
+export function mergeExt(ext, add, today, playerId) {
   const base = ext ? structuredClone(ext) : { format: 'smash-kpi-torneos', version: 1, source: 'start.gg', events: [], sets: [], games: [] };
+  base.playerId = playerId;
   const byId = new Map(base.events.map(e => [e.id, e]));
   for (const e of add.events) byId.set(e.id, { ...byId.get(e.id), ...e, placement: e.placement ?? byId.get(e.id)?.placement ?? null });
   base.events = [...byId.values()].sort((a, b) => b.date.localeCompare(a.date));
