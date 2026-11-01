@@ -81,8 +81,8 @@ Los datos no se tocan al actualizar.
 - Datos de ejemplo: **Ajustes → Cargar datos de ejemplo** para ver cómo queda, y después **Borrar datos de ejemplo** (no toca tus games reales).
 
 ### Torneos de start.gg
-- La app trae tu historial de torneos (54 torneos, 560 games con stage y personajes) y lo suma a tus estadísticas. Filtrá por **Origen** para separarlo de lo que cargás a mano.
-- Para que se actualice sola: **Ajustes → Torneos de start.gg** → pegá un token de la API (start.gg → perfil → Developer Settings → Create new token) → **Guardar y actualizar**. Después busca torneos nuevos una vez por día al abrir la app, o cuando tocás **Actualizar ahora**.
+- La app no trae datos de nadie: cada persona conecta su cuenta y baja sus propios torneos (stage, personajes y resultado de cada game), que se suman a sus estadísticas. Filtrá por **Origen** para separarlos de lo que cargás a mano.
+- **Ajustes → Torneos de start.gg** → pegá un token de la API (start.gg → perfil → Developer Settings → Create new token) → **Guardar y bajar mis torneos**. La app detecta sola de quién es el token (no hace falta buscar el ID). Después busca torneos nuevos una vez por día al abrir la app, o cuando tocás **Actualizar ahora**.
 - El token queda guardado solo en el teléfono y no se incluye en los respaldos.
 
 ---
@@ -103,7 +103,6 @@ js/sample.js        generador de datos de ejemplo
 js/stages.js        qué imagen usa cada stage
 js/startgg.js       sincronización con la API de start.gg
 img/stages/         imágenes de los stages (480 px, JPG)
-data/torneos.json   historial de torneos de start.gg (sets y games)
 data/mre.json       guías de matchups y fundamentos de Mr.E
 icons/              íconos de la app
 ```
