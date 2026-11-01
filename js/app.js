@@ -20,6 +20,9 @@ const S = {
   lastBackup: null,
   focusKpi: 'winGames',
   persisted: false,
+  ext: null,          // historial de torneos (supermajor)
+  extRange: 'all',
+  extAllEvents: false,
   form: null,
   editingId: null,
   lastSaved: null,
@@ -128,6 +131,13 @@ function syncPercents(f) {
   if (d != null && f.recoveryDeaths > d) f.recoveryDeaths = d;
 }
 
+// En torneo el detalle de % viene cerrado: se completa después mirando el VOD.
+const hasPercents = g => [...(g.killPercents || []), ...(g.deathPercents || [])].some(v => typeof v === 'number' && isFinite(v));
+const hasVodData = g => hasPercents(g) || (g.myOpenings || 0) + (g.oppOpenings || 0) > 0;
+const vodOpen = f => f.vodOpen ?? (f.type !== 'torneo' || hasVodData(f));
+// Pendiente de VOD: game de torneo o práctica sin openings ni % cargados.
+const needsVod = g => g.type !== 'casual' && !g.vodSkip && !hasVodData(g);
+
 function setInfo(setId, excludeId) {
   const gs = S.games.filter(g => g.setId === setId && g.id !== excludeId);
   return { n: gs.length, w: gs.filter(g => g.result === 'W').length, l: gs.filter(g => g.result === 'L').length };
@@ -165,9 +175,31 @@ function pctInputs(kind, arr) {
 
 function rivalSuggestions() {
   const q = norm(S.form.rival);
-  const list = rivalsByRecency().filter(r => !q || norm(r).includes(q)).slice(0, 10);
+  let list = rivalsByRecency().filter(r => !q || norm(r).includes(q));
+  // al escribir, también sugiere rivales de tus torneos (supermajor)
+  if (q && S.ext) {
+    const known = new Set(list.map(norm));
+    for (const s of [...S.ext.sets].reverse()) {
+      if (!known.has(norm(s.opp)) && norm(s.opp).includes(q)) { known.add(norm(s.opp)); list.push(s.opp); }
+    }
+  }
+  list = list.slice(0, 10);
   if (!list.length) return '';
   return list.map(r => `<button type="button" class="chip sm ${r === S.form.rival ? 'on' : ''}" data-a="rivalPick" data-v="${esc(r)}">${esc(r)}</button>`).join('');
+}
+
+// Sets de torneo (supermajor) contra el rival escrito, sin contar DQ.
+function extSetsVs(name) {
+  const n = norm(name);
+  return S.ext && n.length >= 2 ? S.ext.sets.filter(s => !s.dq && norm(s.opp) === n) : [];
+}
+
+function rivalH2H() {
+  const sets = extSetsVs(S.form.rival);
+  if (!sets.length) return '';
+  const w = sets.filter(s => s.won).length;
+  const chars = [...new Set(sets.map(s => s.oppChar).filter(Boolean))].slice(0, 3).join(', ');
+  return `<div class="h2h">🏆 En torneos vs <b>${esc(sets[0].opp)}</b>: <b class="${w * 2 >= sets.length ? 'win' : 'loss'}">${w}-${sets.length - w}</b> en sets${chars ? ` · usa ${esc(chars)}` : ''}</div>`;
 }
 
 // ---------- ayuda de baneos (torneo) ----------
@@ -297,6 +329,11 @@ function renderCargar() {
   const { main, second } = S.settings;
   const otherMine = f.myChar !== main && f.myChar !== second;
   const quickOpp = topChars('oppChar', 6);
+  // los personajes que usa este rival en torneos van primero
+  for (const c of [...new Set(extSetsVs(f.rival).map(s => s.oppChar).filter(Boolean))].slice(0, 2).reverse()) {
+    if (quickOpp.includes(c)) quickOpp.splice(quickOpp.indexOf(c), 1);
+    quickOpp.unshift(c);
+  }
   if (f.oppChar && !quickOpp.includes(f.oppChar)) quickOpp.unshift(f.oppChar);
   const k = killsKnown(f), d = deathsKnown(f);
 
@@ -309,6 +346,7 @@ function renderCargar() {
     <label class="lbl" for="rival">Rival</label>
     <input id="rival" class="inp" data-in="rival" value="${esc(f.rival)}" placeholder="Nombre del rival" autocomplete="off" autocapitalize="words" enterkeyhint="done">
     <div class="chips scroll-x" id="rivalSug">${rivalSuggestions()}</div>
+    <div id="rivalH2H">${rivalH2H()}</div>
     <span class="lbl">Game del set</span>
     <div class="chips nums">${[1, 2, 3, 4, 5].map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>
   </section>
@@ -345,15 +383,17 @@ function renderCargar() {
   </section>
 
   <section class="card">
-    <span class="lbl">Openings</span>
-    <div class="counters two">${counter('myOpenings', 'Míos')}${counter('oppOpenings', 'Del rival')}</div>
-  </section>
-
-  <section class="card">
-    <span class="lbl">% al que maté en cada stock</span>
-    ${k == null ? '<p class="muted small">Elegí resultado y stocks primero.</p>' : k === 0 ? '<p class="muted small">No tomaste stocks.</p>' : pctInputs('kill', f.killPercents)}
-    <span class="lbl">% al que morí en cada stock</span>
-    ${d == null ? '<p class="muted small">Elegí resultado y stocks primero.</p>' : d === 0 ? '<p class="muted small">No perdiste stocks.</p>' : pctInputs('death', f.deathPercents)}
+    <details class="vod" data-vod ${vodOpen(f) ? 'open' : ''}>
+      <summary><span class="lbl">📼 Detalle para VOD review</span><span class="muted small">Openings y % de cada stock · opcional, se puede completar después</span></summary>
+      <div class="vod-body">
+        <span class="lbl">Openings</span>
+        <div class="counters two">${counter('myOpenings', 'Míos')}${counter('oppOpenings', 'Del rival')}</div>
+        <span class="lbl">% al que maté en cada stock</span>
+        ${k == null ? '<p class="muted small">Elegí resultado y stocks primero.</p>' : k === 0 ? '<p class="muted small">No tomaste stocks.</p>' : pctInputs('kill', f.killPercents)}
+        <span class="lbl">% al que morí en cada stock</span>
+        ${d == null ? '<p class="muted small">Elegí resultado y stocks primero.</p>' : d === 0 ? '<p class="muted small">No perdiste stocks.</p>' : pctInputs('death', f.deathPercents)}
+      </div>
+    </details>
   </section>
 
   <section class="card">
@@ -445,6 +485,7 @@ function cleanGame(f) {
     notes: f.notes.trim(), attacks: f.attacks, sample: f.sample, updatedAt: Date.now(),
     rpsWinner: f.type === 'torneo' ? f.rpsWinner : null, prevWinner: f.type === 'torneo' ? f.prevWinner : null,
     bans: f.type === 'torneo' ? f.bans : [], stagePicker: f.stage ? f.stagePicker : null,
+    vodSkip: !!f.vodSkip,
   };
 }
 
@@ -465,6 +506,7 @@ async function saveGame() {
   requestPersist();
   if (S.editingId) {
     S.editingId = null;
+    S.vodFocus = false;
     // si venía de corregir el game recién cargado, vuelve al panel de "siguiente game"
     if (S.returnTab === 'cargar') { S.lastSaved = g; S.form = null; } else S.form = newForm();
     toast('Cambios guardados', 'ok');
@@ -478,13 +520,24 @@ async function saveGame() {
   toast('Game guardado', 'ok');
 }
 
-function editGame(id, returnTab) {
+function editGame(id, returnTab, vodFocus = false) {
   const g = S.games.find(x => x.id === id);
   if (!g) return;
-  S.form = { ...newForm(), ...structuredClone(g), notes: g.notes || '' };
+  S.form = { ...newForm(), ...structuredClone(g), notes: g.notes || '', vodOpen: vodFocus || undefined };
   S.editingId = id;
   S.returnTab = returnTab;
+  S.vodFocus = vodFocus;
   go('cargar');
+  // modo VOD review: salta directo a los casilleros de %
+  if (vodFocus) view.querySelector('[data-vod]')?.scrollIntoView({ block: 'start' });
+}
+
+async function skipVod(ids) {
+  const gs = S.games.filter(g => ids.includes(g.id));
+  gs.forEach(g => { g.vodSkip = true; });
+  await db.putMany('games', gs);
+  renderHist();
+  toast(gs.length === 1 ? 'Quitado de pendientes' : `${gs.length} games quitados de pendientes`);
 }
 
 // selector de personaje
@@ -606,8 +659,8 @@ function resumenHTML(fg, setMap) {
       ${tile('stockDiff', k, 'por game')}
       ${tile('openingRatio', k, `${k.myOpenings} / ${k.oppOpenings}`)}
       ${tile('openingsPerKill', k, `más bajo = mejor · rival: ${fmtKpi('openingsPerKill', k.oppOpeningsPerKill)}`)}
-      ${tile('killPct', k, 'más bajo = mejor')}
-      ${tile('deathPct', k, 'más alto = mejor')}
+      ${tile('killPct', k, `más bajo = mejor · ${k.killGames} games con %`)}
+      ${tile('deathPct', k, `más alto = mejor · ${k.deathGames} games con %`)}
       ${tile('earlyDeaths', k, `${k.earlyCount} de ${k.deathRecorded} muertes con %`)}
       ${tile('recoveryRate', k, `${k.recoveryDeaths} de ${k.totDeaths} muertes`)}
       ${k.cloudGames ? tile('limitConv', k, `${k.limitConverted} kills de ${k.limitUsed} usados · ${k.limitCharged} cargados`) : ''}
@@ -621,9 +674,9 @@ function resumenHTML(fg, setMap) {
 }
 
 // fila con barra: etiqueta, win %, cantidad de games
-function patRow(label, r) {
+function patRow(label, r, cls = '') {
   const v = r.n ? r.w / r.n : null;
-  return `<div class="pat-row ${r.n < MIN_N ? 'low' : ''}"><span>${label}</span>
+  return `<div class="pat-row ${r.n < MIN_N ? 'low' : ''} ${cls}"><span>${label}</span>
     <div class="pat-bar"><i style="width:${v == null ? 0 : Math.round(v * 100)}%"></i></div>
     <b>${v == null ? '—' : Math.round(v * 100) + '%'}</b><small>${r.n}${r.n < MIN_N ? ' ⚠' : ''}</small></div>`;
 }
@@ -702,6 +755,64 @@ function breakdownHTML(fg, setMap, { keyFn, title, thumb, what }) {
     <p class="muted small">En rojo: el peor valor de cada KPI entre tus ${what} con 3+ games, y win rate menor a 40%.</p>`;
 }
 
+// Historial de torneos importado de supermajor: resultados por set (sin detalle por game).
+function torneosHTML() {
+  const d = S.ext;
+  if (!d) return '<p class="empty">No se pudo cargar el historial de torneos.</p>';
+  const months = { all: null, year: 12, half: 6 }[S.extRange];
+  const cutoff = months ? (() => { const x = new Date(); x.setMonth(x.getMonth() - months); return st.ymd(x); })() : '';
+  const events = d.events.filter(e => e.date >= cutoff).sort((a, b) => b.date.localeCompare(a.date));
+  const ev = new Map(events.map(e => [e.id, e]));
+  const sets = d.sets.filter(s => ev.has(s.event));
+  const played = sets.filter(s => !s.dq);
+  const rec = arr => ({ n: arr.length, w: arr.filter(s => s.won).length });
+  const wl = r => `${r.w}-${r.n - r.w}`;
+  const groupRec = keyFn => [...st.groupBy(played, keyFn).entries()].map(([k, arr]) => ({ k, ...rec(arr) }));
+  const all = rec(played);
+  const games = played.reduce((a, s) => ({ w: a.w + s.my, n: a.n + s.my + s.their }), { w: 0, n: 0 });
+  const off = rec(played.filter(s => !ev.get(s.event).online)), on = rec(played.filter(s => ev.get(s.event).online));
+  const pct = r => (r.n ? Math.round((r.w / r.n) * 100) + '%' : '—');
+  const bad = r => (r.n >= 3 && r.w / r.n < 0.4 ? 'bad' : '');
+  const byYear = groupRec(s => ev.get(s.event).date.slice(0, 4)).sort((a, b) => b.k.localeCompare(a.k));
+  const byMine = groupRec(s => s.myChar || '?').sort((a, b) => b.n - a.n);
+  const byOpp = groupRec(s => s.oppChar).filter(r => r.k).sort((a, b) => b.n - a.n || a.w / a.n - b.w / b.n);
+  const rivals = groupRec(s => s.opp).filter(r => r.n >= 2).sort((a, b) => b.n - a.n);
+  const rangeChip = (v, l) => `<button class="chip sm ${S.extRange === v ? 'on' : ''}" data-a="extRange" data-v="${v}">${l}</button>`;
+  const shownEvents = S.extAllEvents ? events : events.slice(0, 10);
+  const tileHTML = (label, val, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-val">${val}</div><div class="t-sub">${sub}</div></div>`;
+  return `
+    <section class="card"><span class="lbl">🏆 Tus torneos (supermajor.gg)</span>
+      <p class="muted small">${esc(d.player)} · ${events.length} torneos · actualizado ${fmtDate(d.fetchedAt)}. Son resultados por set: no tienen stocks, openings ni stages, y no los afectan los filtros de arriba.</p>
+      <div class="chips">${rangeChip('all', 'Todo')}${rangeChip('year', 'Último año')}${rangeChip('half', 'Últimos 6 meses')}</div>
+    </section>
+    <div class="tiles">
+      ${tileHTML('Sets ganados', pct(all), `${wl(all)} · sin contar ${sets.length - played.length} DQ`)}
+      ${tileHTML('Games ganados', games.n ? Math.round((games.w / games.n) * 100) + '%' : '—', `${games.w}-${games.n - games.w}`)}
+      ${tileHTML('Offline', pct(off), `${wl(off)} en sets`)}
+      ${tileHTML('Online', pct(on), `${wl(on)} en sets`)}
+    </div>
+    <section class="card"><span class="lbl">Sets ganados</span>
+      <div class="pat-block"><div class="lbl sub">Por año</div>${byYear.map(r => patRow(`${r.k} · ${wl(r)}`, r)).join('')}</div>
+      <div class="pat-block"><div class="lbl sub">Con qué personaje jugaste</div>${byMine.map(r => patRow(`${esc(r.k)} · ${wl(r)}`, r)).join('')}</div>
+    </section>
+    <section class="card"><span class="lbl">Por personaje rival</span>
+      ${byOpp.map(r => patRow(`${esc(r.k)} · ${wl(r)}`, r, bad(r))).join('')}
+      <p class="muted small">En rojo: 3+ sets y menos de 40% ganados.</p>
+    </section>
+    <section class="card"><span class="lbl">Rivales frecuentes (2+ sets)</span>
+      ${rivals.map(r => patRow(`${esc(r.k)} · ${wl(r)}`, r, bad(r))).join('') || '<p class="muted small">Nadie repetido en este período.</p>'}
+    </section>
+    <section class="card"><span class="lbl">Torneos</span>
+      ${shownEvents.map(e => {
+        const r = rec(sets.filter(s => s.event === e.id && !s.dq));
+        return `<div class="ev-row"><div class="ev-main"><b>${esc(e.name)}</b>
+          <small>${fmtDate(e.date)} · ${e.online ? '🌐 Online' : '🏟️ Offline'} · sets ${wl(r)}</small></div>
+          <div class="ev-place"><b>${e.placement}º</b><small>de ${e.entrants}</small></div></div>`;
+      }).join('')}
+      ${events.length > shownEvents.length ? `<button class="btn" data-a="extAllEvents">Ver los ${events.length} torneos</button>` : ''}
+    </section>`;
+}
+
 function compareHTML(setMap) {
   const { main, second } = S.settings;
   const base = st.filterGames(S.games, { ...S.filters, myChar: null });
@@ -736,22 +847,22 @@ function compareHTML(setMap) {
 
 function renderStats() {
   setTitle('Estadísticas');
-  if (!S.games.length) {
-    view.innerHTML = `<div class="empty-state"><p>Todavía no cargaste games.</p>
+  const emptyState = `<div class="empty-state"><p>Todavía no cargaste games.</p>
       <button class="btn big primary" data-a="go" data-v="cargar">Cargar el primero</button>
       <button class="btn big" data-a="loadSample">Probar con datos de ejemplo</button></div>`;
-    return;
-  }
+  if (!S.games.length && !S.ext) { view.innerHTML = emptyState; return; }
   const setMap = st.groupSets(S.games);
   const fg = st.filterGames(S.games, S.filters);
   const seg = (v, l) => `<button class="seg-btn ${S.statsTab === v ? 'on' : ''}" data-a="statsTab" data-v="${v}">${l}</button>`;
   let body;
-  if (S.statsTab === 'resumen') body = fg.length ? resumenHTML(fg, setMap) : focusHTML(setMap) + '<p class="empty">No hay games con estos filtros.</p>';
+  if (S.statsTab === 'torneos') body = torneosHTML();
+  else if (!S.games.length) body = emptyState;
+  else if (S.statsTab === 'resumen') body = fg.length ? resumenHTML(fg, setMap) : focusHTML(setMap) + '<p class="empty">No hay games con estos filtros.</p>';
   else if (S.statsTab === 'matchups') body = matchupsHTML(fg, setMap);
   else if (S.statsTab === 'stages') body = stagesHTML(fg, setMap);
   else body = compareHTML(setMap);
-  view.innerHTML = `${filtersHTML()}
-    <div class="seg">${seg('resumen', 'Resumen')}${seg('matchups', 'Matchups')}${seg('stages', 'Stages')}${seg('compare', `${esc(S.settings.main)} vs ${esc(S.settings.second)}`)}</div>
+  view.innerHTML = `${S.statsTab === 'torneos' || !S.games.length ? '' : filtersHTML()}
+    <div class="seg">${seg('resumen', 'Resumen')}${seg('matchups', 'Matchups')}${seg('stages', 'Stages')}${seg('compare', `${esc(S.settings.main)} vs ${esc(S.settings.second)}`)}${seg('torneos', '🏆 Torneos')}</div>
     ${body}`;
 }
 
@@ -760,46 +871,67 @@ function gameLine(g) {
   const kp = (g.killPercents || []).filter(v => v != null);
   const dp = (g.deathPercents || []).filter(v => v != null);
   const atk = g.attacks?.me ? Object.entries(g.attacks.me).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([m, c]) => `${m} ${c}`).join(', ') : '';
+  const vod = needsVod(g);
   return `<div class="game ${g.result === 'W' ? 'w' : 'l'}">
     <div class="g-top"><b class="g-res">${g.result}</b><span>G${g.gameNum} · ${esc(g.stage || 'sin stage')}</span>
-      <span class="muted">${g.myStocksLeft}-${g.oppStocksLeft} stocks</span></div>
-    <div class="g-info">${esc(g.myChar)} vs ${esc(g.oppChar)} · Openings ${g.myOpenings}/${g.oppOpenings}
-      ${g.stagePicker ? `<br>Stage elegido por ${g.stagePicker === 'me' ? 'mí' : 'el rival'}` : ''}
+      <span class="muted">${g.myStocksLeft}-${g.oppStocksLeft} stocks</span>${vod ? '<span class="vod-badge">📼 VOD pendiente</span>' : ''}</div>
+    <div class="g-info">${esc(g.myChar)} vs ${esc(g.oppChar)}${(g.myOpenings || g.oppOpenings) ? ` · Openings ${g.myOpenings}/${g.oppOpenings}` : ''}      ${g.stagePicker ? `<br>Stage elegido por ${g.stagePicker === 'me' ? 'mí' : 'el rival'}` : ''}
       ${g.bans?.length ? `<br>Baneos: ${g.bans.map(b => `${esc(b.stage)} (${b.by === 'me' ? 'yo' : 'rival'})`).join(', ')}` : ''}
       ${kp.length ? `<br>Maté a: ${kp.join('%, ')}%` : ''}${dp.length ? `<br>Morí a: ${dp.join('%, ')}%` : ''}
       ${g.recoveryDeaths ? `<br>Muertes por recovery: ${g.recoveryDeaths}` : ''}
       ${g.myChar === 'Cloud' ? `<br>Limit: ${g.limitsCharged} cargados · ${g.limitsUsed} usados · ${g.limitsConverted} dieron kill` : ''}
       ${atk ? `<br>Ataques (mod): ${esc(atk)}` : ''}
       ${g.notes ? `<br><i>“${esc(g.notes)}”</i>` : ''}</div>
+    ${vod ? `<div class="g-actions"><button class="btn sm primary" data-a="vodFill" data-v="${g.id}">Completar %</button>
+      <button class="btn sm ghost" data-a="vodSkip" data-v="${g.id}">No lo voy a revisar</button></div>` : ''}
     <div class="g-actions"><button class="btn sm" data-a="edit" data-v="${g.id}">Editar</button>
       <button class="btn sm danger" data-a="delGame" data-v="${g.id}">Borrar</button></div>
   </div>`;
 }
 
+function setCardHTML(s, open, games = s.games) {
+  const chars = [...new Set(s.games.map(g => g.oppChar))].join(' / ');
+  const mine = [...new Set(s.games.map(g => g.myChar))].join(' / ');
+  return `<article class="card set ${s.decided ? (s.won ? 'won' : 'lost') : ''}">
+    <button class="set-head" data-a="toggleSet" data-v="${s.setId}">
+      <span class="score"><b class="win">${s.wins}</b>-<b class="loss">${s.losses}</b></span>
+      <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small></span>
+      <span class="set-meta"><small>${fmtDate(s.date)}</small><small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
+    </button>
+    ${open ? `<div class="set-body">${games.map(gameLine).join('')}
+      ${S.histMode === 'vod' ? '' : `<button class="btn" data-a="addToSet" data-v="${s.setId}">+ Agregar game a este set</button>`}</div>` : ''}
+  </article>`;
+}
+
 function renderHist() {
   setTitle('Historial');
   const q = norm(S.histQuery);
+  const pending = S.games.filter(needsVod);
+  if (S.histMode === 'vod' && !pending.length) S.histMode = 'all';
+  const modeChips = `<div class="chips">
+    <button class="chip sm ${S.histMode !== 'vod' ? 'on' : ''}" data-a="histMode" data-v="all">Todos</button>
+    <button class="chip sm ${S.histMode === 'vod' ? 'on' : ''}" data-a="histMode" data-v="vod">📼 Pendientes de VOD (${pending.length})</button></div>`;
+
+  if (S.histMode === 'vod') {
+    // sets con games pendientes, abiertos y mostrando solo esos games
+    const ids = new Set(pending.map(g => g.setId));
+    const sets = [...st.groupSets(S.games).values()].filter(s => ids.has(s.setId)).sort((a, b) => b.lastTs - a.lastTs);
+    view.innerHTML = `${modeChips}
+      <p class="muted small">Games de torneo y práctica sin % cargados. Abrí el VOD, tocá <b>Completar %</b> y anotá a qué % cayó cada stock.</p>
+      ${sets.map(s => setCardHTML(s, true, s.games.filter(needsVod))).join('')}
+      <button class="btn ghost" data-a="vodSkipAll">Quitar todos de pendientes</button>`;
+    return;
+  }
+
   const sets = [...st.groupSets(S.games).values()]
     .filter(s => !q || norm(s.rival).includes(q) || s.games.some(g => norm(g.oppChar).includes(q) || norm(g.myChar).includes(q)))
     .sort((a, b) => b.lastTs - a.lastTs);
   const shown = sets.slice(0, S.histLimit);
   view.innerHTML = `
+    ${pending.length ? modeChips : ''}
     <input class="inp" type="search" data-in="histQuery" value="${esc(S.histQuery)}" placeholder="Buscar rival o personaje…">
     <p class="muted small">${sets.length} sets · ${sets.reduce((a, s) => a + s.games.length, 0)} games</p>
-    ${shown.map(s => {
-      const open = S.histOpen.has(s.setId);
-      const chars = [...new Set(s.games.map(g => g.oppChar))].join(' / ');
-      const mine = [...new Set(s.games.map(g => g.myChar))].join(' / ');
-      return `<article class="card set ${s.decided ? (s.won ? 'won' : 'lost') : ''}">
-        <button class="set-head" data-a="toggleSet" data-v="${s.setId}">
-          <span class="score"><b class="win">${s.wins}</b>-<b class="loss">${s.losses}</b></span>
-          <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small></span>
-          <span class="set-meta"><small>${fmtDate(s.date)}</small><small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
-        </button>
-        ${open ? `<div class="set-body">${s.games.map(gameLine).join('')}
-          <button class="btn" data-a="addToSet" data-v="${s.setId}">+ Agregar game a este set</button></div>` : ''}
-      </article>`;
-    }).join('') || '<p class="empty">No hay games.</p>'}
+    ${shown.map(s => setCardHTML(s, S.histOpen.has(s.setId))).join('') || '<p class="empty">No hay games.</p>'}
     ${sets.length > shown.length ? '<button class="btn big" data-a="more">Ver más</button>' : ''}`;
 }
 
@@ -1034,7 +1166,7 @@ const actions = {
   inc: t => bump(t.dataset.f, 1),
   dec: t => bump(t.dataset.f, -1),
   save: () => saveGame(),
-  rivalPick: t => { S.form.rival = t.dataset.v; $('#rival').value = t.dataset.v; $('#rivalSug').innerHTML = rivalSuggestions(); },
+  rivalPick: t => { S.form.rival = t.dataset.v; renderCargar(); },
   pickChar: t => openPicker(t.dataset.v),
   stageTap: t => stageTap(t.dataset.v),
   setBan: t => { S.form[t.dataset.f] = t.dataset.v || null; renderCargar(); },
@@ -1054,6 +1186,7 @@ const actions = {
     if (S.returnTab === 'cargar') { S.lastSaved = S.games.find(g => g.id === S.editingId) || null; S.form = S.lastSaved ? null : newForm(); }
     else S.form = newForm();
     S.editingId = null;
+    S.vodFocus = false;
     go(S.returnTab || 'historial');
   },
   go: t => go(t.dataset.v),
@@ -1065,10 +1198,20 @@ const actions = {
     renderStats();
   },
   statsTab: t => { S.statsTab = t.dataset.v; renderStats(); },
+  extRange: t => { S.extRange = t.dataset.v; renderStats(); },
+  extAllEvents: () => { S.extAllEvents = true; renderStats(); },
   mSort: t => { S.mSort = t.dataset.v; renderStats(); },
   toggleSet: t => { const id = t.dataset.v; S.histOpen.has(id) ? S.histOpen.delete(id) : S.histOpen.add(id); renderHist(); },
   more: () => { S.histLimit += 25; renderHist(); },
   edit: t => editGame(t.dataset.v, 'historial'),
+  vodFill: t => editGame(t.dataset.v, 'historial', true),
+  vodSkip: t => skipVod([t.dataset.v]),
+  vodSkipAll: async () => {
+    const ids = S.games.filter(needsVod).map(g => g.id);
+    const ok = await ask('Quitar pendientes', `Se van a quitar <b>${ids.length}</b> games de la lista de VOD pendientes. Los datos no se borran.`, [{ value: 'y', label: 'Sí, quitarlos', cls: 'primary' }]);
+    if (ok) skipVod(ids);
+  },
+  histMode: t => { S.histMode = t.dataset.v; renderHist(); window.scrollTo(0, 0); },
   addToSet: t => {
     const gs = S.games.filter(g => g.setId === t.dataset.v).sort((a, b) => b.gameNum - a.gameNum);
     S.form = nextForm(gs[0]); S.lastSaved = null; S.editingId = null; go('cargar');
@@ -1131,7 +1274,7 @@ view.addEventListener('input', e => {
   const t = e.target;
   const k = t.dataset.in;
   if (!k) return;
-  if (k === 'rival') { S.form.rival = t.value; $('#rivalSug').innerHTML = rivalSuggestions(); }
+  if (k === 'rival') { S.form.rival = t.value; $('#rivalSug').innerHTML = rivalSuggestions(); $('#rivalH2H').innerHTML = rivalH2H(); }
   else if (k === 'notes') S.form.notes = t.value;
   else if (k === 'kill' || k === 'death') {
     t.value = t.value.replace(/\D/g, '').slice(0, 3);
@@ -1159,6 +1302,11 @@ view.addEventListener('change', async e => {
     toast('Guardado', 'ok');
   } else if (k === 'importFile' && t.files[0]) { await importFile(t.files[0]); t.value = ''; }
 });
+
+// recuerda si la sección de VOD quedó abierta o cerrada (toggle no burbujea: se escucha en captura)
+view.addEventListener('toggle', e => {
+  if (S.form && e.target.matches?.('[data-vod]')) S.form.vodOpen = e.target.open;
+}, true);
 
 // Enter en un campo de % pasa al siguiente
 view.addEventListener('keydown', e => {
@@ -1192,6 +1340,12 @@ async function init() {
   S.form = newForm();
   render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // historial de torneos de supermajor, incluido en la app (data/supermajor.json)
+  fetch('data/supermajor.json').then(r => (r.ok ? r.json() : null)).catch(() => null).then(d => {
+    if (d?.format !== 'smash-kpi-supermajor') return;
+    S.ext = d;
+    if (S.tab === 'stats' || S.tab === 'ajustes') render();
+  });
 }
 
 init();
