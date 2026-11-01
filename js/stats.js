@@ -10,8 +10,13 @@ export const EARLY = 80; // % debajo del cual una muerte cuenta como temprana
 export const deathsOf =g => (g.stocks || 3) - (g.myStocksLeft || 0);
 export const killsOf = g => (g.stocks || 3) - (g.oppStocksLeft || 0);
 
+// Games importados de start.gg sin dato de stocks: no cuentan para KPIs de stocks.
+export const stocksKnown = g => !g.stocksUnknown && g.myStocksLeft != null && g.oppStocksLeft != null;
+
 export function filterGames(games, f = {}) {
   return games.filter(g =>
+    (!f.source || (f.source === 'startgg') === !!g.imported) &&
+    (!f.online || (g.online != null && g.online === (f.online === 'online'))) &&
     (!f.myChar || g.myChar === f.myChar) &&
     (!f.oppChar || g.oppChar === f.oppChar) &&
     (!f.rival || g.rival === f.rival) &&
@@ -48,30 +53,42 @@ export function groupSets(games) {
 
 export function computeKpis(games, setMap) {
   const n = games.length;
-  let wins = 0, sd = 0, myO = 0, opO = 0, totDeaths = 0, totKills = 0, rec = 0;
+  let wins = 0, sd = 0, myO = 0, opO = 0, totDeaths = 0, totKills = 0, rec = 0, stockGames = 0, recGames = 0, recDeaths = 0;
   let lc = 0, lu = 0, lconv = 0, cloudGames = 0, openGames = 0, killGames = 0, deathGames = 0;
+  let opkOpen = 0, opkKills = 0, opkOppOpen = 0, opkDeaths = 0;
   const kills = [], deaths = [], setIds = new Set();
   for (const g of games) {
     if (g.result === 'W') wins++;
-    sd += (g.myStocksLeft || 0) - (g.oppStocksLeft || 0);
-    if ((g.myOpenings || 0) + (g.oppOpenings || 0) > 0) openGames++;
+    const known = stocksKnown(g);
+    const hasOpenings = (g.myOpenings || 0) + (g.oppOpenings || 0) > 0;
+    if (hasOpenings) openGames++;
     myO += g.myOpenings || 0;
     opO += g.oppOpenings || 0;
+    if (known) {
+      stockGames++;
+      sd += g.myStocksLeft - g.oppStocksLeft;
+      totDeaths += deathsOf(g);
+      totKills += killsOf(g);
+      // muertes por recovery: solo se anotan en games cargados en la app
+      if (!g.imported) { recGames++; recDeaths += deathsOf(g); rec += g.recoveryDeaths || 0; }
+      if (hasOpenings) {
+        opkOpen += g.myOpenings || 0; opkKills += killsOf(g);
+        opkOppOpen += g.oppOpenings || 0; opkDeaths += deathsOf(g);
+      }
+      // Limit solo en games cargados a mano (los importados no lo tienen)
+      if (g.myChar === 'Cloud' && !g.imported) {
+        cloudGames++;
+        lc += g.limitsCharged || 0;
+        lu += g.limitsUsed || 0;
+        lconv += g.limitsConverted || 0;
+      }
+    }
     const kp = (g.killPercents || []).filter(isNum);
     const dp = (g.deathPercents || []).filter(isNum);
     if (kp.length) killGames++;
     if (dp.length) deathGames++;
     kills.push(...kp);
     deaths.push(...dp);
-    totDeaths += deathsOf(g);
-    totKills += killsOf(g);
-    rec += g.recoveryDeaths || 0;
-    if (g.myChar === 'Cloud') {
-      cloudGames++;
-      lc += g.limitsCharged || 0;
-      lu += g.limitsUsed || 0;
-      lconv += g.limitsConverted || 0;
-    }
     setIds.add(g.setId);
   }
   let sets = 0, setWins = 0;
@@ -86,18 +103,18 @@ export function computeKpis(games, setMap) {
     winGames: n ? wins / n : null,
     sets, setWins,
     winSets: sets ? setWins / sets : null,
-    stockDiff: n ? sd / n : null,
+    stockDiff: stockGames ? sd / stockGames : null, stockGames,
     myOpenings: myO, oppOpenings: opO, openGames,
     openingRatio: opO ? myO / opO : null,
     totKills,
-    openingsPerKill: totKills && openGames ? myO / totKills : null,
-    oppOpeningsPerKill: totDeaths && openGames ? opO / totDeaths : null,
+    openingsPerKill: opkKills ? opkOpen / opkKills : null,
+    oppOpeningsPerKill: opkDeaths ? opkOppOpen / opkDeaths : null,
     earlyDeaths: deaths.length ? deaths.filter(p => p < EARLY).length / deaths.length : null,
     earlyCount: deaths.filter(p => p < EARLY).length, deathRecorded: deaths.length,
     killPct: avg(kills), killGames,
     deathPct: avg(deaths), deathGames,
-    recoveryRate: totDeaths ? rec / totDeaths : null,
-    recoveryDeaths: rec, totDeaths,
+    recoveryRate: recDeaths ? rec / recDeaths : null,
+    recoveryDeaths: rec, totDeaths, recDeaths, recGames,
     limitCharged: lc, limitUsed: lu, limitConverted: lconv, cloudGames,
     limitConv: lu ? lconv / lu : null,
   };
@@ -113,6 +130,8 @@ export function sampleSize(k, key) {
     case 'deathPct':
     case 'earlyDeaths': return k.deathGames;
     case 'limitConv': return k.cloudGames;
+    case 'stockDiff': return k.stockGames;
+    case 'recoveryRate': return k.recGames;
     default: return k.n;
   }
 }
