@@ -35,6 +35,11 @@ const S = {
   statsTab: 'resumen',
   mSort: 'worst',
   histQuery: '',
+  notes: [],          // notas de matchups (kind 'mu') y de jugadores (kind 'pl')
+  notesTab: 'mu',
+  noteMy: null,       // mi personaje elegido en la lista de matchups
+  noteOpen: null,     // nota abierta: { id, kind, myChar, oppChar, player }
+  noteQuery: '',
   histOpen: new Set(),
   histLimit: 25,
 };
@@ -350,7 +355,7 @@ function renderCargar() {
     <label class="lbl" for="rival">Rival</label>
     <input id="rival" class="inp" data-in="rival" value="${esc(f.rival)}" placeholder="Nombre del rival" autocomplete="off" autocapitalize="words" enterkeyhint="done">
     <div class="chips scroll-x" id="rivalSug">${rivalSuggestions()}</div>
-    <div id="rivalH2H">${rivalH2H()}</div>
+    <div id="rivalH2H">${rivalH2H()}${rivalNoteHint()}</div>
     <span class="lbl">Game del set</span>
     <div class="chips nums">${[1, 2, 3, 4, 5].map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>
   </section>
@@ -368,6 +373,7 @@ function renderCargar() {
       ${quickOpp.map(c => chip('oppChar', c, esc(c), f.oppChar === c)).join('')}
       <button type="button" class="chip ghost" data-a="pickChar" data-v="opp">${quickOpp.length ? 'Buscar…' : 'Elegir personaje…'}</button>
     </div>
+    ${muNoteHint()}
   </section>
 
   ${stageSectionHTML(f)}
@@ -558,13 +564,14 @@ function openPicker(target) {
 }
 function renderPickerList(q) {
   const nq = norm(q);
-  const field = pickerTarget === 'opp' ? 'oppChar' : 'myChar';
-  const current = S.form?.[field];
+  // 'note' elige el personaje rival de una nota de matchup
+  const field = pickerTarget === 'my' ? 'myChar' : 'oppChar';
+  const current = pickerTarget === 'note' ? null : S.form?.[field];
   const top = topChars(field, 8, pickerTarget === 'my' ? [S.settings.main, S.settings.second] : []);
   const matches = ROSTER.filter(([n, a]) => !nq || norm(n + ' ' + (a || '')).includes(nq)).map(r => r[0]).sort((a, b) => a.localeCompare(b));
   const btn = c => `<button class="pick ${c === current ? 'on' : ''}" data-a="pickDone" data-v="${esc(c)}">${esc(c)}</button>`;
   $('#plist').innerHTML = `
-    ${!nq && top.length ? `<div class="lbl">${pickerTarget === 'opp' ? 'Los que más enfrento' : 'Los que más uso'}</div><div class="pick-grid">${top.map(btn).join('')}</div><div class="lbl">Todo el roster</div>` : ''}
+    ${!nq && top.length ? `<div class="lbl">${pickerTarget === 'my' ? 'Los que más uso' : 'Los que más enfrento'}</div><div class="pick-grid">${top.map(btn).join('')}</div><div class="lbl">Todo el roster</div>` : ''}
     <div class="pick-grid">${matches.map(btn).join('') || '<p class="muted">Sin resultados</p>'}</div>`;
 }
 
@@ -946,7 +953,7 @@ function renderHist() {
 
 // ---------- ajustes, respaldo e importación ----------
 function backupData() {
-  return { app: 'smash-kpi', version: 1, exportedAt: new Date().toISOString(), settings: S.settings, games: S.games };
+  return { app: 'smash-kpi', version: 1, exportedAt: new Date().toISOString(), settings: S.settings, games: S.games, notes: S.notes };
 }
 
 function csvData() {
@@ -1030,8 +1037,10 @@ async function importFile(file) {
     { value: 'replace', label: 'Reemplazar todo', cls: 'danger' },
   ]);
   if (!mode) return;
-  if (mode === 'replace') { await db.clear('games'); S.games = []; }
+  if (mode === 'replace') { await db.clear('games'); await db.clear('notes'); S.games = []; }
   await db.putMany('games', games);
+  if (Array.isArray(data.notes)) await db.putMany('notes', data.notes.filter(n => n && n.id && typeof n.text === 'string'));
+  S.notes = await db.getAll('notes');
   if (data.settings && mode === 'replace') { Object.assign(S.settings, data.settings); await db.put('meta', S.settings, 'settings'); }
   S.games = await db.getAll('games');
   render();
@@ -1138,8 +1147,192 @@ async function loadSample() {
   render();
 }
 
+// ---------- notas de matchups y de jugadores ----------
+const noteId = { mu: (my, opp) => `mu:${my}|${opp}`, pl: name => `pl:${norm(name)}` };
+const getNote = id => S.notes.find(n => n.id === id);
+const snip = (t, len) => (t.length > len ? t.slice(0, len).trimEnd() + '…' : t);
+const muBase = (my, opp) => ({ id: noteId.mu(my, opp), kind: 'mu', myChar: my, oppChar: opp });
+const plBase = name => ({ id: noteId.pl(name), kind: 'pl', player: name.trim() });
+const NOTE_TEMPLATES = {
+  mu: 'Neutral:\n\nCómo me mata:\nCómo lo mato:\n\nStages (ban / pick):\nRecovery / edgeguard:\n\nCosas a evitar:\n',
+  pl: 'Personajes:\n\nHábitos en neutral:\nOpciones en ledge:\nOut of shield:\n\nCómo se adapta entre games:\nPlan para la próxima:\n',
+};
+
+async function saveNote(base, text) {
+  const i = S.notes.findIndex(n => n.id === base.id);
+  if (!text.trim()) {
+    if (i >= 0) { S.notes.splice(i, 1); await db.del('notes', base.id); }
+    return;
+  }
+  const n = { ...(i >= 0 ? S.notes[i] : base), text, updatedAt: Date.now() };
+  if (i >= 0) S.notes[i] = n; else S.notes.push(n);
+  await db.put('notes', n);
+}
+
+// rivales conocidos (games cargados + torneos), los más jugados primero
+function knownPlayers() {
+  const m = new Map();
+  const add = name => { if (!name) return; const k = norm(name); const e = m.get(k) || { name, n: 0 }; e.n++; m.set(k, e); };
+  S.games.forEach(g => add(g.rival));
+  (S.ext?.sets || []).forEach(s => add(s.opp));
+  return [...m.values()].sort((a, b) => b.n - a.n);
+}
+
+const gamesWithNotes = filter => S.games.filter(g => g.notes?.trim() && filter(g)).sort((a, b) => b.ts - a.ts);
+
+function gameNoteHTML(g) {
+  return `<button class="note-game" data-a="noteGame" data-v="${g.id}">
+    <span class="ng-top"><b class="${g.result === 'W' ? 'win' : 'loss'}">${g.result}</b>
+      ${fmtDate(g.date)} · vs ${esc(g.rival)} · G${g.gameNum}${g.stage ? ' · ' + esc(g.stage) : ''}</span>
+    <small>${esc(g.myChar)} vs ${esc(g.oppChar)}${g.event ? ' · 🏆 ' + esc(g.event) : ''}</small>
+    <span class="ng-text">${esc(g.notes)}</span></button>`;
+}
+
+function muStats(my, opp) {
+  const gs = S.games.filter(g => g.myChar === my && g.oppChar === opp);
+  const w = gs.filter(g => g.result === 'W').length;
+  const sets = (S.ext?.sets || []).filter(s => !s.dq && s.my != null && s.myChar === my && s.oppChar === opp);
+  const sw = sets.filter(s => s.won).length;
+  const parts = [];
+  if (gs.length) parts.push(`Games ${w}-${gs.length - w} (${Math.round((w / gs.length) * 100)}%)`);
+  if (sets.length) parts.push(`Sets de torneo ${sw}-${sets.length - sw}`);
+  return parts.join(' · ') || 'Todavía sin games';
+}
+
+function plStats(name) {
+  const n = norm(name);
+  const gs = S.games.filter(g => norm(g.rival) === n);
+  const w = gs.filter(g => g.result === 'W').length;
+  const sets = (S.ext?.sets || []).filter(s => !s.dq && s.my != null && norm(s.opp) === n);
+  const sw = sets.filter(s => s.won).length;
+  const chars = [...new Set([...gs.map(g => g.oppChar), ...sets.map(s => s.oppChar)].filter(Boolean))].slice(0, 4);
+  const parts = [];
+  if (gs.length) parts.push(`Games ${w}-${gs.length - w}`);
+  if (sets.length) parts.push(`Sets de torneo ${sw}-${sets.length - sw}`);
+  if (chars.length) parts.push(`usa ${chars.join(', ')}`);
+  return parts.map(esc).join(' · ') || 'Todavía sin games';
+}
+
+function noteCardHTML(n, title, stats) {
+  return `<button class="note-card" data-a="noteOpen" data-v="${esc(n.id)}">
+    <span class="nc-top"><b>${title}</b><small>${fmtDate(st.ymd(new Date(n.updatedAt)))}</small></span>
+    <small class="muted">${stats}</small>
+    <span class="nc-snip">${esc(snip(n.text, 160))}</span></button>`;
+}
+
+function notesMuHTML() {
+  const my = S.noteMy || S.settings.main;
+  const mine = [...new Set([S.settings.main, S.settings.second, ...S.notes.filter(n => n.kind === 'mu').map(n => n.myChar)])];
+  const notes = S.notes.filter(n => n.kind === 'mu' && n.myChar === my).sort((a, b) => b.updatedAt - a.updatedAt);
+  const withNote = new Set(notes.map(n => n.oppChar));
+  const count = new Map();
+  S.games.filter(g => g.myChar === my && g.oppChar && !withNote.has(g.oppChar)).forEach(g => count.set(g.oppChar, (count.get(g.oppChar) || 0) + 1));
+  const suggest = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(e => e[0]);
+  return `
+    <div class="chips">${mine.map(c => `<button class="chip ${c === my ? 'on' : ''}" data-a="noteMy" data-v="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+    <button class="btn big primary" data-a="noteNewMu">＋ Nota de matchup (${esc(my)} vs …)</button>
+    ${notes.map(n => noteCardHTML(n, `${esc(n.myChar)} vs ${esc(n.oppChar)}`, esc(muStats(n.myChar, n.oppChar)))).join('')
+      || `<p class="empty">Todavía no tenés notas de matchups con ${esc(my)}.</p>`}
+    ${suggest.length ? `<span class="lbl">Los que más enfrentás sin nota</span>
+      <div class="chips">${suggest.map(c => `<button class="chip sm ghost" data-a="noteMuQuick" data-v="${esc(c)}">＋ ${esc(c)}</button>`).join('')}</div>` : ''}`;
+}
+
+function notesPlHTML() {
+  const q = norm(S.noteQuery);
+  const notes = S.notes.filter(n => n.kind === 'pl' && (!q || norm(n.player).includes(q) || norm(n.text).includes(q)))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const withNote = new Set(S.notes.filter(n => n.kind === 'pl').map(n => n.id));
+  const suggest = knownPlayers().filter(p => !withNote.has(noteId.pl(p.name))).slice(0, 8);
+  return `
+    <input class="inp" type="search" data-in="noteQuery" value="${esc(S.noteQuery)}" placeholder="Buscar jugador o texto…">
+    <button class="btn big primary" data-a="noteNewPl">＋ Nota de jugador</button>
+    ${notes.map(n => noteCardHTML(n, esc(n.player), plStats(n.player))).join('')
+      || `<p class="empty">${q ? 'No hay notas que coincidan.' : 'Todavía no tenés notas de jugadores.'}</p>`}
+    ${!q && suggest.length ? `<span class="lbl">Rivales frecuentes sin nota</span>
+      <div class="chips">${suggest.map(p => `<button class="chip sm ghost" data-a="notePickPl" data-v="${esc(p.name)}">＋ ${esc(p.name)}</button>`).join('')}</div>` : ''}`;
+}
+
+function notesGamesHTML() {
+  const q = norm(S.noteQuery);
+  const gs = gamesWithNotes(g => !q || [g.rival, g.oppChar, g.myChar, g.stage, g.notes, g.event].some(v => v && norm(v).includes(q)));
+  return `
+    <input class="inp" type="search" data-in="noteQuery" value="${esc(S.noteQuery)}" placeholder="Buscar rival, personaje, stage o texto…">
+    <p class="muted small">${gs.length} games con notas. Se escriben en "Notas" al cargar o editar un game. Tocá uno para editarlo.</p>
+    ${gs.map(gameNoteHTML).join('') || '<p class="empty">No hay games con notas.</p>'}`;
+}
+
+function noteDetailHTML() {
+  const base = S.noteOpen;
+  const n = getNote(base.id);
+  const isMu = base.kind === 'mu';
+  const title = isMu ? `${esc(base.myChar)} vs ${esc(base.oppChar)}` : esc(base.player);
+  const games = isMu
+    ? gamesWithNotes(g => g.myChar === base.myChar && g.oppChar === base.oppChar)
+    : gamesWithNotes(g => norm(g.rival) === norm(base.player));
+  return `
+    <div class="note-head"><button class="btn icon" data-a="noteBack" aria-label="volver">‹</button>
+      <div><b>${title}</b><small class="muted">${isMu ? esc(muStats(base.myChar, base.oppChar)) : plStats(base.player)}</small></div></div>
+    <section class="card">
+      <span class="lbl">${isMu ? 'Nota del matchup' : 'Nota del jugador'}</span>
+      <textarea class="inp note-text" data-in="noteText" rows="12" placeholder="${isMu ? 'Qué hace en neutral, cómo te mata, a qué % lo matás, qué stages banear…' : 'Qué personajes usa, sus hábitos, cómo se adapta…'}">${esc(n?.text || '')}</textarea>
+      <div class="row-between"><span class="muted small" id="noteStatus">${n ? 'Guardado · ' + fmtDate(st.ymd(new Date(n.updatedAt))) : 'Se guarda solo mientras escribís'}</span>
+        ${n ? '<button class="btn sm danger" data-a="noteDelete">Borrar nota</button>' : '<button class="btn sm" data-a="noteTemplate">Usar plantilla</button>'}</div>
+    </section>
+    <section class="card">
+      <span class="lbl">Notas de tus games ${isMu ? 'en este matchup' : 'contra este jugador'} (${games.length})</span>
+      ${games.map(gameNoteHTML).join('') || '<p class="muted small">Todavía no escribiste notas en games que correspondan.</p>'}
+    </section>`;
+}
+
+function renderNotas() {
+  setTitle('Notas');
+  if (S.noteOpen) { view.innerHTML = noteDetailHTML(); return; }
+  const seg = (v, l) => `<button class="seg-btn ${S.notesTab === v ? 'on' : ''}" data-a="notesTab" data-v="${v}">${l}</button>`;
+  const body = S.notesTab === 'mu' ? notesMuHTML() : S.notesTab === 'pl' ? notesPlHTML() : notesGamesHTML();
+  view.innerHTML = `<div class="seg">${seg('mu', 'Matchups')}${seg('pl', 'Jugadores')}${seg('games', 'Notas de games')}</div>${body}`;
+}
+
+function openNote(base) {
+  flushNote();
+  S.noteOpen = base;
+  S.tab = 'notas';
+  render();
+  window.scrollTo(0, 0);
+}
+
+// guardado con espera: no escribe en la base en cada tecla
+let noteTimer = null, notePending = null;
+function queueNote(text) {
+  const base = S.noteOpen;
+  notePending = () => saveNote(base, text);
+  clearTimeout(noteTimer);
+  const status = $('#noteStatus');
+  if (status) status.textContent = 'Guardando…';
+  noteTimer = setTimeout(async () => {
+    await flushNote();
+    const s = $('#noteStatus');
+    if (s) s.textContent = text.trim() ? 'Guardado' : 'Nota vacía (se borra)';
+  }, 600);
+}
+async function flushNote() {
+  clearTimeout(noteTimer);
+  const p = notePending;
+  notePending = null;
+  if (p) await p();
+}
+
+// resumen de la nota en la pantalla de carga, para leerla antes de jugar
+function noteHint(n, label) {
+  return n ? `<button type="button" class="note-hint" data-a="noteView" data-v="${esc(n.id)}">📝 <b>${label}</b><span>${esc(snip(n.text, 110))}</span></button>` : '';
+}
+const rivalNoteHint = () => (S.form.rival.trim().length >= 2 ? noteHint(getNote(noteId.pl(S.form.rival)), `Nota de ${esc(S.form.rival.trim())}`) : '');
+const muNoteHint = () => (S.form.oppChar ? noteHint(getNote(noteId.mu(S.form.myChar, S.form.oppChar)), `Nota ${esc(S.form.myChar)} vs ${esc(S.form.oppChar)}`) : '');
+
 // ---------- navegación y eventos ----------
 function go(tab) {
+  flushNote();
+  // tocar "Notas" estando en una nota vuelve a la lista
+  if (tab === 'notas' && S.tab === 'notas') S.noteOpen = null;
   S.tab = tab;
   if (tab === 'cargar' && !S.form && !S.lastSaved) S.form = newForm();
   render();
@@ -1149,7 +1342,7 @@ function go(tab) {
 function render() {
   document.querySelectorAll('.tabbar [data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === S.tab));
   $('.tabbar [data-tab="ajustes"]').classList.toggle('dot', backupOverdue());
-  ({ cargar: renderCargar, stats: renderStats, historial: renderHist, ajustes: renderAjustes })[S.tab]();
+  ({ cargar: renderCargar, stats: renderStats, historial: renderHist, notas: renderNotas, ajustes: renderAjustes })[S.tab]();
 }
 
 const actions = {
@@ -1164,9 +1357,65 @@ const actions = {
   banReset: () => { Object.assign(S.form, { bans: [], stage: '', stagePicker: null }); renderCargar(); },
   banFree: () => { S.form.banFree = !S.form.banFree; renderCargar(); },
   pickDone: t => {
-    const field = pickerTarget === 'opp' ? 'oppChar' : 'myChar';
     closeSheet();
-    setField(field, t.dataset.v);
+    if (pickerTarget === 'note') { openNote(muBase(S.noteMy || S.settings.main, t.dataset.v)); return; }
+    setField(pickerTarget === 'opp' ? 'oppChar' : 'myChar', t.dataset.v);
+  },
+  notesTab: t => { S.notesTab = t.dataset.v; S.noteQuery = ''; renderNotas(); },
+  noteMy: t => { S.noteMy = t.dataset.v; renderNotas(); },
+  noteOpen: t => { const n = getNote(t.dataset.v); if (n) openNote({ id: n.id, kind: n.kind, myChar: n.myChar, oppChar: n.oppChar, player: n.player }); },
+  noteNewMu: () => openPicker('note'),
+  noteMuQuick: t => openNote(muBase(S.noteMy || S.settings.main, t.dataset.v)),
+  notePickPl: t => { closeSheet(); openNote(plBase(t.dataset.v)); },
+  noteNewPl: () => {
+    openSheet(`<div class="sheet-head"><input id="plq" class="inp" placeholder="Nombre o tag del jugador" autocomplete="off" autocapitalize="words">
+      <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
+      <div class="sheet-body"><button class="btn big primary" data-a="notePlCreate">Crear nota</button>
+      <div class="lbl">Rivales conocidos</div><div class="chips" id="plsug"></div></div>`);
+    const fill = q => {
+      const list = knownPlayers().filter(p => !q || norm(p.name).includes(norm(q))).slice(0, 24);
+      $('#plsug').innerHTML = list.map(p => `<button class="chip sm" data-a="notePickPl" data-v="${esc(p.name)}">${esc(p.name)}</button>`).join('') || '<p class="muted small">Sin coincidencias: tocá "Crear nota".</p>';
+    };
+    fill('');
+    $('#plq').addEventListener('input', e => fill(e.target.value));
+  },
+  notePlCreate: () => {
+    const name = $('#plq').value.trim();
+    if (!name) { toast('Escribí el nombre del jugador', 'err'); return; }
+    // si ya existe con otra forma de escribirlo, usa ese nombre
+    const known = knownPlayers().find(p => norm(p.name) === norm(name));
+    closeSheet();
+    openNote(plBase(known ? known.name : name));
+  },
+  noteBack: () => { flushNote(); S.noteOpen = null; renderNotas(); window.scrollTo(0, 0); },
+  noteTemplate: () => {
+    const ta = view.querySelector('[data-in="noteText"]');
+    ta.value = NOTE_TEMPLATES[S.noteOpen.kind] + ta.value;
+    queueNote(ta.value);
+    ta.focus();
+  },
+  noteDelete: async () => {
+    const ok = await ask('Borrar nota', 'Se borra esta nota. Las notas de tus games no se tocan.', [{ value: 'y', label: 'Borrar nota', cls: 'danger' }]);
+    if (!ok) return;
+    notePending = null; clearTimeout(noteTimer);
+    await saveNote(S.noteOpen, '');
+    S.noteOpen = null;
+    renderNotas();
+    toast('Nota borrada');
+  },
+  noteGame: t => { flushNote(); editGame(t.dataset.v, 'notas'); },
+  noteView: t => {
+    const n = getNote(t.dataset.v);
+    if (!n) return;
+    openSheet(`<div class="sheet-head"><h2>${n.kind === 'mu' ? `${esc(n.myChar)} vs ${esc(n.oppChar)}` : esc(n.player)}</h2>
+      <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
+      <div class="sheet-body"><div class="note-read">${esc(n.text)}</div>
+      <button class="btn big" data-a="noteEditFrom" data-v="${esc(n.id)}">Editar en Notas</button></div>`);
+  },
+  noteEditFrom: t => {
+    const n = getNote(t.dataset.v);
+    closeSheet();
+    if (n) openNote({ id: n.id, kind: n.kind, myChar: n.myChar, oppChar: n.oppChar, player: n.player });
   },
   closeSheet: () => closeSheet(),
   answer: t => { const r = sheetResolve; sheetResolve = null; closeSheet(); r && r(t.dataset.v); },
@@ -1266,11 +1515,11 @@ const actions = {
     toast('Datos de ejemplo borrados');
   },
   wipe: async () => {
-    const ok = await ask('Borrar todo', `Se van a borrar <b>${S.games.length}</b> games de este teléfono. No se puede deshacer. ¿Exportaste un respaldo?`,
+    const ok = await ask('Borrar todo', `Se van a borrar <b>${S.games.length}</b> games y <b>${S.notes.length}</b> notas de este teléfono. No se puede deshacer. ¿Exportaste un respaldo?`,
       [{ value: 'y', label: 'Sí, borrar todo', cls: 'danger' }]);
     if (!ok) return;
-    await db.clear('games');
-    S.games = []; S.lastSaved = null; S.form = newForm();
+    await db.clear('games'); await db.clear('notes');
+    S.games = []; S.notes = []; S.noteOpen = null; S.lastSaved = null; S.form = newForm();
     render();
     toast('Datos borrados');
   },
@@ -1289,19 +1538,23 @@ view.addEventListener('input', e => {
   const t = e.target;
   const k = t.dataset.in;
   if (!k) return;
-  if (k === 'rival') { S.form.rival = t.value; $('#rivalSug').innerHTML = rivalSuggestions(); $('#rivalH2H').innerHTML = rivalH2H(); }
+  if (k === 'rival') {
+    S.form.rival = t.value;
+    $('#rivalSug').innerHTML = rivalSuggestions();
+    $('#rivalH2H').innerHTML = rivalH2H() + rivalNoteHint();
+  }
   else if (k === 'notes') S.form.notes = t.value;
   else if (k === 'kill' || k === 'death') {
     t.value = t.value.replace(/\D/g, '').slice(0, 3);
     const arr = k === 'kill' ? S.form.killPercents : S.form.deathPercents;
     arr[Number(t.dataset.i)] = t.value === '' ? null : Number(t.value);
-  } else if (k === 'histQuery') {
-    S.histQuery = t.value;
+  } else if (k === 'histQuery' || k === 'noteQuery') {
+    S[k] = t.value;
     const pos = t.selectionStart;
-    renderHist();
-    const inp = view.querySelector('[data-in="histQuery"]');
+    k === 'histQuery' ? renderHist() : renderNotas();
+    const inp = view.querySelector(`[data-in="${k}"]`);
     inp.focus(); inp.setSelectionRange(pos, pos);
-  }
+  } else if (k === 'noteText') queueNote(t.value);
 });
 
 view.addEventListener('change', async e => {
@@ -1343,9 +1596,10 @@ document.querySelector('.tabbar').addEventListener('click', e => {
 
 async function init() {
   try {
-    const [games, settings, lastBackup, focusKpi] = await Promise.all([
-      db.getAll('games'), db.get('meta', 'settings'), db.get('meta', 'lastBackup'), db.get('meta', 'focusKpi'),
+    const [games, settings, lastBackup, focusKpi, notes] = await Promise.all([
+      db.getAll('games'), db.get('meta', 'settings'), db.get('meta', 'lastBackup'), db.get('meta', 'focusKpi'), db.getAll('notes'),
     ]);
+    S.notes = notes;
     // quita restos del formato de ataques que ya no se usa
     S.games = games.map(g => { if ('attacks' in g) delete g.attacks; return g; });
     Object.assign(S.settings, settings || {});
