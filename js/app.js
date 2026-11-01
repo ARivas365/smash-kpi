@@ -40,6 +40,8 @@ const S = {
   noteMy: null,       // mi personaje elegido en la lista de matchups
   noteOpen: null,     // nota abierta: { id, kind, myChar, oppChar, player }
   noteQuery: '',
+  mre: null,          // guías de Mr.E (data/mre.json), se cargan aparte
+  mreOpen: null,      // título de la guía abierta
   histOpen: new Set(),
   histLimit: 25,
 };
@@ -1317,6 +1319,9 @@ function noteDetailHTML() {
       <textarea class="inp note-text" data-in="noteText" rows="12" placeholder="${isMu ? 'Qué hace en neutral, cómo te mata, a qué % lo matás, qué stages banear…' : 'Qué personajes usa, sus hábitos, cómo se adapta…'}">${esc(n?.text || '')}</textarea>
       <div class="row-between"><span class="muted small" id="noteStatus">${n ? 'Guardado · ' + fmtDate(st.ymd(new Date(n.updatedAt))) : 'Se guarda solo mientras escribís'}</span>
         ${n ? '<button class="btn sm danger" data-a="noteDelete">Borrar nota</button>' : '<button class="btn sm" data-a="noteTemplate">Usar plantilla</button>'}</div>
+      ${isMu && mreDocFor(base.oppChar) ? `<div class="btn-row">
+        <button class="btn sm" data-a="mreUse" data-v="${esc(base.oppChar)}">📘 Usar nota de Mr.E</button>
+        <button class="btn sm ghost" data-a="mreView" data-v="${esc(base.oppChar)}">Ver guía</button></div>` : ''}
     </section>
     <section class="card">
       <span class="lbl">Notas de tus games ${isMu ? 'en este matchup' : 'contra este jugador'} (${games.length})</span>
@@ -1324,12 +1329,71 @@ function noteDetailHTML() {
     </section>`;
 }
 
+// ---------- guías de Mr.E (data/mre.json) ----------
+let mreLoading = null;
+function loadMre() {
+  if (S.mre) return Promise.resolve(S.mre);
+  mreLoading ||= fetch('data/mre.json').then(r => (r.ok ? r.json() : null)).catch(() => null).then(d => {
+    S.mre = d?.format === 'smash-kpi-mre' ? d : null;
+    mreLoading = null;
+    return S.mre;
+  });
+  return mreLoading;
+}
+const mreDocFor = char => S.mre?.docs.find(d => d.chars.includes(char));
+const mreFind = title => S.mre && [...S.mre.docs, ...S.mre.general].find(d => d.title === title);
+
+// las líneas "## Título" son secciones; el resto, párrafos
+function mreTextHTML(text) {
+  return text.split(/\n{2,}/).map(block => (/^## [^\n]+$/.test(block)
+    ? `<h3>${esc(block.slice(3))}</h3>`
+    : `<p>${block.split('\n').map(l => (l.startsWith('## ') ? `<b>${esc(l.slice(3))}</b>` : esc(l))).join('<br>')}</p>`)).join('');
+}
+
+const mreTemplate = char => `— Base: guía de Mr.E vs ${char} —\n\n` + mreDocFor(char).text.replace(/^## (.+)$/gm, '▶ $1') + '\n\n— Mis notas —\n';
+
+function notesMreHTML() {
+  if (!S.mre) {
+    loadMre().then(() => { if (S.tab === 'notas' && S.notesTab === 'mre') renderNotas(); });
+    return '<p class="empty">Cargando guías de Mr.E…</p>';
+  }
+  if (S.mreOpen && mreFind(S.mreOpen)) return mreReaderHTML(mreFind(S.mreOpen));
+  const q = norm(S.noteQuery);
+  const match = d => !q || norm(d.title).includes(q) || (d.chars || []).some(c => norm(c).includes(q)) || norm(d.text).includes(q);
+  const btn = d => `<button class="pick" data-a="mreOpen" data-v="${esc(d.title)}">${esc(d.title)}</button>`;
+  const docs = S.mre.docs.filter(match), general = S.mre.general.filter(match);
+  return `
+    <input class="inp" type="search" data-in="noteQuery" value="${esc(S.noteQuery)}" placeholder="Buscar personaje o palabra (ej: ledge, shield)…">
+    <p class="muted small">Guías de Mr.E: ${S.mre.docs.length} de personajes y ${S.mre.general.length} de fundamentos. Son consejos generales del matchup para tener una idea; completalos con tus notas.</p>
+    ${general.length ? `<span class="lbl">Fundamentos</span><div class="pick-grid">${general.map(btn).join('')}</div>` : ''}
+    ${docs.length ? `<span class="lbl">Personajes</span><div class="pick-grid">${docs.map(btn).join('')}</div>` : ''}
+    ${!docs.length && !general.length ? '<p class="empty">No hay guías que coincidan.</p>' : ''}`;
+}
+
+function mreReaderHTML(d) {
+  const my = S.noteMy || S.settings.main;
+  return `
+    <div class="note-head"><button class="btn icon" data-a="mreBack" aria-label="volver">‹</button>
+      <div><b>${esc(d.title)}</b><small class="muted">Guía de Mr.E${d.chars ? ' · ' + esc(d.chars.join(', ')) : ''}</small></div></div>
+    ${(d.chars || []).map(c => `<button class="btn" data-a="mreToNote" data-v="${esc(c)}">📝 ${getNote(noteId.mu(my, c)) ? 'Abrir' : 'Crear'} mi nota ${esc(my)} vs ${esc(c)}</button>`).join('')}
+    <section class="card mre-text">${mreTextHTML(d.text)}</section>`;
+}
+
+// agrega la guía de Mr.E a la nota abierta (reemplaza si está vacía, si no la suma al final)
+function applyMreTemplate(char) {
+  const ta = view.querySelector('[data-in="noteText"]');
+  if (!ta || !mreDocFor(char)) return;
+  ta.value = ta.value.trim() ? `${ta.value.trimEnd()}\n\n${mreTemplate(char)}` : mreTemplate(char);
+  queueNote(ta.value);
+  toast('Guía de Mr.E agregada a tu nota', 'ok');
+}
+
 function renderNotas() {
   setTitle('Notas');
   if (S.noteOpen) { view.innerHTML = noteDetailHTML(); return; }
   const seg = (v, l) => `<button class="seg-btn ${S.notesTab === v ? 'on' : ''}" data-a="notesTab" data-v="${v}">${l}</button>`;
-  const body = S.notesTab === 'mu' ? notesMuHTML() : S.notesTab === 'pl' ? notesPlHTML() : notesGamesHTML();
-  view.innerHTML = `<div class="seg">${seg('mu', 'Matchups')}${seg('pl', 'Jugadores')}${seg('games', 'Notas de games')}</div>${body}`;
+  const body = { mu: notesMuHTML, pl: notesPlHTML, games: notesGamesHTML, mre: notesMreHTML }[S.notesTab]();
+  view.innerHTML = `<div class="seg">${seg('mu', 'Matchups')}${seg('pl', 'Jugadores')}${seg('games', 'Notas de games')}${seg('mre', '📘 Mr.E')}</div>${body}`;
 }
 
 function openNote(base) {
@@ -1366,13 +1430,14 @@ function noteHint(n, label) {
   return n ? `<button type="button" class="note-hint" data-a="noteView" data-v="${esc(n.id)}">📝 <b>${label}</b><span>${esc(snip(n.text, 110))}</span></button>` : '';
 }
 const rivalNoteHint = () => (S.form.rival.trim().length >= 2 ? noteHint(getNote(noteId.pl(S.form.rival)), `Nota de ${esc(S.form.rival.trim())}`) : '');
-const muNoteHint = () => (S.form.oppChar ? noteHint(getNote(noteId.mu(S.form.myChar, S.form.oppChar)), `Nota ${esc(S.form.myChar)} vs ${esc(S.form.oppChar)}`) : '');
+const muNoteHint = () => (S.form.oppChar ? noteHint(getNote(noteId.mu(S.form.myChar, S.form.oppChar)), `Nota ${esc(S.form.myChar)} vs ${esc(S.form.oppChar)}`)
+  + (mreDocFor(S.form.oppChar) ? `<button type="button" class="mre-hint" data-a="mreView" data-v="${esc(S.form.oppChar)}">📘 Guía de Mr.E vs ${esc(S.form.oppChar)}</button>` : '') : '');
 
 // ---------- navegación y eventos ----------
 function go(tab) {
   flushNote();
   // tocar "Notas" estando en una nota vuelve a la lista
-  if (tab === 'notas' && S.tab === 'notas') S.noteOpen = null;
+  if (tab === 'notas' && S.tab === 'notas') { S.noteOpen = null; S.mreOpen = null; }
   S.tab = tab;
   if (tab === 'cargar' && !S.form && !S.lastSaved) S.form = newForm();
   render();
@@ -1401,7 +1466,24 @@ const actions = {
     if (pickerTarget === 'note') { openNote(muBase(S.noteMy || S.settings.main, t.dataset.v)); return; }
     setField(pickerTarget === 'opp' ? 'oppChar' : 'myChar', t.dataset.v);
   },
-  notesTab: t => { S.notesTab = t.dataset.v; S.noteQuery = ''; renderNotas(); },
+  notesTab: t => { S.notesTab = t.dataset.v; S.noteQuery = ''; S.mreOpen = null; renderNotas(); },
+  mreOpen: t => { S.mreOpen = t.dataset.v; renderNotas(); window.scrollTo(0, 0); },
+  mreBack: () => { S.mreOpen = null; renderNotas(); window.scrollTo(0, 0); },
+  mreToNote: t => {
+    const char = t.dataset.v;
+    const base = muBase(S.noteMy || S.settings.main, char);
+    const isNew = !getNote(base.id);
+    openNote(base);
+    if (isNew) applyMreTemplate(char);
+  },
+  mreUse: t => applyMreTemplate(t.dataset.v),
+  mreView: t => {
+    const d = mreDocFor(t.dataset.v);
+    if (!d) return;
+    openSheet(`<div class="sheet-head"><h2>📘 Mr.E: ${esc(d.title)}</h2>
+      <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div>
+      <div class="sheet-body mre-text">${mreTextHTML(d.text)}</div>`);
+  },
   noteMy: t => { S.noteMy = t.dataset.v; renderNotas(); },
   noteOpen: t => { const n = getNote(t.dataset.v); if (n) openNote({ id: n.id, kind: n.kind, myChar: n.myChar, oppChar: n.oppChar, player: n.player }); },
   noteNewMu: () => openPicker('note'),
@@ -1665,6 +1747,7 @@ async function init() {
   S.form = newForm();
   render();
   requestPersist();
+  loadMre();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
   // historial de torneos: el que viene con la app (data/torneos.json) o el sincronizado, el que tenga más sets
   const [bundled, stored, sggConf] = await Promise.all([
