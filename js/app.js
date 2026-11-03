@@ -4,8 +4,10 @@ import * as st from './stats.js';
 import { lineChart } from './charts.js';
 import { stageArt } from './stages.js';
 import * as sgg from './startgg.js';
+import * as drive from './drive.js';
 
-const APP_VERSION = '1.0.0';
+// mismo número que CACHE en sw.js: se suben juntos en cada actualización
+const APP_VERSION = '16';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -45,6 +47,10 @@ const S = {
   histOpen: new Set(),
   histLimit: 25,
   histSource: 'all',
+  // respaldo en Google Drive: la cuenta y cuándo fue el último (el permiso de Google queda solo en memoria)
+  drive: { email: '', lastBackup: null, remind: true },
+  driveBusy: '',
+  driveLater: false,
 };
 
 // ---------- utilidades ----------
@@ -55,8 +61,9 @@ const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase
 const fmtDate = s => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y.slice(2)}`; };
 const fmtDateLong = s => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
 const hhmm = ts => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-// el selector de fecha del sistema puede mostrar mes/día/año: se tapa con el texto en día/mes/año
-const dateField = (attrs, value) => `<label class="inp date-pick"><span>${value ? fmtDateLong(value) : 'dd/mm/aaaa'}</span>
+// se usa el calendario del teléfono, pero la fecha elegida se muestra siempre en día/mes/año
+// (el campo del sistema queda invisible encima del texto)
+const dateField = (attrs, value) => `<label class="inp date-pick"><span>📅 ${value ? fmtDateLong(value) : 'dd/mm/aaaa'}</span>
   <input type="date" ${attrs} value="${value || ''}"></label>`;
 // hora en que se guardó el primer game del set (los importados de start.gg no la tienen; si se cargó otro día, tampoco)
 function setStart(games, date) {
@@ -190,6 +197,33 @@ function topChars(field, limit, exclude = []) {
   return [...c.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(e => e[0]);
 }
 
+// Personajes que usa un rival (games cargados, torneos de start.gg y su scouting), los más usados primero.
+function rivalChars(name) {
+  const n = norm(name);
+  if (n.length < 2) return [];
+  const c = new Map();
+  const add = ch => { if (ch) c.set(ch, (c.get(ch) || 0) + 1); };
+  S.games.forEach(g => { if (norm(g.rival) === n) add(g.oppChar); });
+  extSetsVs(name).forEach(s => add(s.oppChar));
+  const person = scoutData?.people[n];
+  (person && scoutData.reports[person.id]?.games || []).forEach(g => add(g.char));
+  return [...c.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+}
+
+// Si ya se sabe qué usa el rival, solo se sugieren esos personajes; si no, los que más enfrentás.
+function oppCharsHTML(f) {
+  const known = rivalChars(f.rival);
+  const quick = known.length ? known.slice(0, 6) : topChars('oppChar', 6);
+  if (f.oppChar && !quick.includes(f.oppChar)) quick.unshift(f.oppChar);
+  return `<span class="lbl">Personaje del rival${known.length ? ` <small class="lbl-note">· lo que usa ${esc(f.rival.trim())}</small>` : ''}</span>
+    <div class="chips">
+      ${quick.map(c => chip('oppChar', c, esc(c), f.oppChar === c)).join('')}
+      <button type="button" class="chip ghost" data-a="pickChar" data-v="opp">${quick.length ? 'Buscar…' : 'Elegir personaje…'}</button>
+    </div>`;
+}
+
+const rivalBoxHTML = () => rivalH2H() + rivalNoteHint() + scoutBtnHTML(S.form.rival);
+
 const chip = (field, value, label, on, extra = '') =>
   `<button type="button" class="chip ${on ? 'on' : ''} ${extra}" data-a="set" data-f="${field}" data-v="${esc(value)}">${label}</button>`;
 
@@ -308,24 +342,77 @@ function banHeaderHTML(plan, f) {
   return html;
 }
 
+// ---------- sugerencia de baneos y picks ----------
+// Récord de cada stage con mi personaje vs el del rival. Con pocos games vs ese personaje, el puntaje
+// se completa con mi récord general en ese stage (cuantos más games del matchup, menos pesa lo general).
+const SUG_K = 3;
+function stageRecords(f) {
+  if (!f.myChar || !f.oppChar) return null;
+  const rec = {};
+  for (const g of S.games) {
+    if (!g.stage || g.myChar !== f.myChar || g.id === S.editingId) continue;
+    const r = rec[g.stage] || (rec[g.stage] = { w: 0, n: 0, aw: 0, an: 0 });
+    r.an++; if (g.result === 'W') r.aw++;
+    if (g.oppChar === f.oppChar) { r.n++; if (g.result === 'W') r.w++; }
+  }
+  if (!Object.keys(rec).length) return null;
+  for (const r of Object.values(rec)) {
+    const general = (r.aw + 1) / (r.an + 2);
+    r.score = (r.w + SUG_K * general) / (r.n + SUG_K);
+  }
+  return rec;
+}
+
+const recText = (r, f) => (r.n ? `${r.w}-${r.n - r.w} vs ${esc(f.oppChar)}${r.n < MIN_N ? ' ⚠' : ''}` : `sin games vs ${esc(f.oppChar)} · general ${Math.round(r.aw / r.an * 100)}%`);
+
+// Stages que conviene banear (los peores) o elegir (el mejor) en este paso.
+function suggestion(plan, step, f, recs) {
+  if (!recs || !step || step.who !== 'me' || step.done) return null;
+  const free = plan.pool.filter(s => !f.bans.some(b => b.stage === s) && recs[s]);
+  if (!free.length) return null;
+  const sorted = free.sort((a, b) => recs[a].score - recs[b].score);
+  return step.act === 'ban' ? sorted.slice(0, step.left) : sorted.slice(-1);
+}
+
+function suggestionHTML(plan, step, f, recs, sug) {
+  if (plan.need || !step) return '';
+  if (!f.oppChar) return '<p class="muted small">Elegí el personaje del rival para ver qué stages te conviene banear y elegir.</p>';
+  if (!recs) return `<p class="muted small">Todavía no tenés games de ${esc(f.myChar)} con stage cargado: las sugerencias aparecen cuando cargues algunos.</p>`;
+  if (!sug?.length) return '';
+  const act = step.act === 'ban' ? '🚫 Sugerido banear' : '⭐ Sugerido elegir';
+  return `<div class="sug-box"><b>${act}:</b>
+    ${sug.map(s => `<div class="sug-row"><span>${esc(s)}</span><small>${recText(recs[s], f)}</small></div>`).join('')}
+    <small class="muted">Según tus games de ${esc(f.myChar)} en cada stage. ⚠ = menos de ${MIN_N} games vs ese personaje: también cuenta tu récord general en el stage.</small></div>`;
+}
+
 function stageSectionHTML(f) {
   const plan = banPlan(f);
   const step = plan && !plan.need ? currentStep(plan, f) : null;
+  const recs = stageRecords(f);
+  const sug = plan ? suggestion(plan, step, f, recs) || [] : [];
+  // récord vs el personaje rival en cada stage (verde si ganás más de la mitad, rojo si menos)
+  const badge = s => {
+    const r = recs?.[s];
+    if (!r?.n) return '';
+    const p = r.w / r.n;
+    return `<i class="st-rec ${p > 0.5 ? 'good' : p < 0.5 ? 'bad' : ''}">${r.w}-${r.n - r.w}</i>`;
+  };
   const groups = plan
     ? STAGE_GROUPS.map(([g, ss]) => [g, ss.filter(s => plan.pool.includes(s))]).filter(([, ss]) => ss.length)
     : STAGE_GROUPS;
   const tile = s => {
     const ban = f.bans.find(b => b.stage === s);
     const on = f.stage === s && !ban;
-    const cls = `${on ? 'on' : ''} ${ban ? 'banned' : ''} ${plan?.need ? 'dim' : ''}`;
+    const cls = `${on ? 'on' : ''} ${ban ? 'banned' : ''} ${plan?.need ? 'dim' : ''} ${sug.includes(s) ? `sug ${step.act}` : ''}`;
     const tag = ban ? `<em class="ban-tag">✕ ${ban.by === 'me' ? 'Vos' : esc(f.rival.trim() || 'Rival')}</em>` : '';
     const label = esc(s === 'Pokémon Stadium 2' ? 'PS2' : s);
+    const r = recs?.[s];
     return S.settings.stageStyle === 'text'
-      ? `<button type="button" class="chip sm ${cls}" data-a="stageTap" data-v="${esc(s)}">${ban ? '✕ ' : ''}${esc(s)}</button>`
-      : `<button type="button" class="stage ${cls}" data-a="stageTap" data-v="${esc(s)}">${stageArt(s)}${tag}<span>${label}</span></button>`;
+      ? `<button type="button" class="chip sm ${cls}" data-a="stageTap" data-v="${esc(s)}">${ban ? '✕ ' : ''}${esc(s)}${r?.n ? ` <small>${r.w}-${r.n - r.w}</small>` : ''}</button>`
+      : `<button type="button" class="stage ${cls}" data-a="stageTap" data-v="${esc(s)}">${stageArt(s)}${ban ? '' : badge(s)}${tag}<span>${label}</span></button>`;
   };
   return `<section class="card">
-    ${plan ? banHeaderHTML(plan, f) : ''}
+    ${plan ? banHeaderHTML(plan, f) + suggestionHTML(plan, step, f, recs, sug) : ''}
     ${groups.map(([group, stages]) => `<span class="lbl">${group}</span>
       <div class="${S.settings.stageStyle === 'text' ? 'chips' : 'stage-grid'}">${stages.map(tile).join('')}</div>`).join('')}
     ${f.type === 'torneo' ? `<div class="ban-tools">
@@ -363,17 +450,11 @@ function renderCargar() {
   const si = setInfo(f.setId, S.editingId);
   const { main, second } = S.settings;
   const otherMine = f.myChar !== main && f.myChar !== second;
-  const quickOpp = topChars('oppChar', 6);
-  // los personajes que usa este rival en torneos van primero
-  for (const c of [...new Set(extSetsVs(f.rival).map(s => s.oppChar).filter(Boolean))].slice(0, 2).reverse()) {
-    if (quickOpp.includes(c)) quickOpp.splice(quickOpp.indexOf(c), 1);
-    quickOpp.unshift(c);
-  }
-  if (f.oppChar && !quickOpp.includes(f.oppChar)) quickOpp.unshift(f.oppChar);
   const k = killsKnown(f), d = deathsKnown(f);
 
   view.innerHTML = `
   ${freshBannerHTML()}
+  ${driveBannerHTML()}
   ${si.n ? `<div class="setbar">Set vs <b>${esc(f.rival)}</b>${si.start ? ` · empezó ${si.start}` : ''} · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando G${f.gameNum}</div>` : ''}
   <section class="card">
     <div class="row-between"><span class="lbl">Tipo de partida</span>
@@ -382,7 +463,7 @@ function renderCargar() {
     <label class="lbl" for="rival">Rival</label>
     <input id="rival" class="inp" data-in="rival" value="${esc(f.rival)}" placeholder="Nombre del rival" autocomplete="off" autocapitalize="words" enterkeyhint="done">
     <div class="chips scroll-x" id="rivalSug">${rivalSuggestions()}</div>
-    <div id="rivalH2H">${rivalH2H()}${rivalNoteHint()}</div>
+    <div id="rivalH2H">${rivalBoxHTML()}</div>
     <span class="lbl">Game del set</span>
     <div class="chips nums">${[1, 2, 3, 4, 5].map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>
   </section>
@@ -395,11 +476,7 @@ function renderCargar() {
       ${otherMine ? chip('myChar', f.myChar, esc(f.myChar), true) : ''}
       <button type="button" class="chip ghost" data-a="pickChar" data-v="my">Otro…</button>
     </div>
-    <span class="lbl">Personaje del rival</span>
-    <div class="chips">
-      ${quickOpp.map(c => chip('oppChar', c, esc(c), f.oppChar === c)).join('')}
-      <button type="button" class="chip ghost" data-a="pickChar" data-v="opp">${quickOpp.length ? 'Buscar…' : 'Elegir personaje…'}</button>
-    </div>
+    <div id="oppCharBox">${oppCharsHTML(f)}</div>
     ${muNoteHint()}
   </section>
 
@@ -1086,6 +1163,110 @@ async function importFile(file) {
   toast(`${games.length} games importados`, 'ok');
 }
 
+// ---------- respaldo en Google Drive ----------
+const DRIVE_DAYS = 14;
+let driveAuth = null; // { token, expires }: permiso de Google de 1 hora, solo en memoria
+const saveDrive = () => db.put('meta', S.drive, 'drive');
+const driveDue = () => !!(drive.CLIENT_ID && S.drive.email && S.drive.remind && S.games.length
+  && (!S.drive.lastBackup || Date.now() - S.drive.lastBackup >= DRIVE_DAYS * DAY));
+const fmtStamp = ts => `${fmtDateLong(st.ymd(new Date(ts)))} ${hhmm(ts)}`;
+
+// Usa el permiso vigente; si no hay, va a Google a pedirlo y la acción sigue sola al volver.
+async function runDrive(name) {
+  if (!navigator.onLine) { toast('Sin internet: Google Drive necesita conexión', 'err'); return; }
+  if (driveAuth && Date.now() < driveAuth.expires) {
+    try { await DRIVE_ACTIONS[name](driveAuth.token); return; }
+    catch (err) {
+      S.driveBusy = '';
+      if (!err.expired) { toast('Google Drive: ' + err.message, 'err'); render(); return; }
+      driveAuth = null;
+    }
+  }
+  toast('Abriendo Google…');
+  drive.authorize(name, S.drive.email);
+}
+
+const DRIVE_ACTIONS = {
+  async backup(token) {
+    S.driveBusy = 'Subiendo respaldo a Google Drive…';
+    render();
+    if (!S.drive.email) S.drive.email = await drive.whoAmI(token);
+    const now = Date.now();
+    await drive.upload(token, `smash-kpi-respaldo-${today()}-${hhmm(now).replace(':', '')}.json`, JSON.stringify(backupData(), null, 1));
+    S.drive.lastBackup = S.lastBackup = now;
+    S.driveBusy = '';
+    await saveDrive();
+    await db.put('meta', S.lastBackup, 'lastBackup');
+    render();
+    toast(`Respaldo guardado en Drive (${S.drive.email})`, 'ok');
+  },
+  async restore(token) {
+    S.driveBusy = 'Buscando tus respaldos en Drive…';
+    render();
+    if (!S.drive.email) { S.drive.email = await drive.whoAmI(token); await saveDrive(); }
+    const files = await drive.list(token);
+    S.driveBusy = '';
+    render();
+    if (!files.length) { toast('No hay respaldos en la carpeta "Smash KPI" de tu Drive', 'err'); return; }
+    openSheet(`<div class="sheet-head"><h2>Recuperar desde Drive</h2><button class="btn icon ghost" data-a="closeSheet" aria-label="Cerrar">✕</button></div>
+      <div class="sheet-body"><p class="muted small">${esc(S.drive.email)} · carpeta Smash KPI · el más nuevo primero</p>
+      ${files.map(f => `<button class="btn" data-a="driveFile" data-v="${esc(f.id)}" data-n="${esc(f.name)}">
+        ${fmtStamp(Date.parse(f.createdTime))} <small class="muted">· ${Math.max(1, Math.round((f.size || 0) / 1024))} KB</small></button>`).join('')}</div>`);
+  },
+};
+
+async function driveFile(id, name) {
+  closeSheet();
+  if (!driveAuth || Date.now() >= driveAuth.expires) { runDrive('restore'); return; }
+  try {
+    toast('Bajando respaldo…');
+    const text = await drive.download(driveAuth.token, id);
+    await importFile(new File([text], name, { type: 'application/json' }));
+  } catch (err) {
+    if (err.expired) { driveAuth = null; runDrive('restore'); } else toast('Google Drive: ' + err.message, 'err');
+  }
+}
+
+function driveBannerHTML() {
+  if (!driveDue() || S.driveLater) return '';
+  const days = S.drive.lastBackup ? Math.floor((Date.now() - S.drive.lastBackup) / DAY) : null;
+  return `<section class="card alert">
+    <b>☁️ Toca respaldar en Google Drive</b>
+    <p class="small">${days == null ? 'Todavía no hiciste un respaldo en Drive.' : `El último fue hace ${days} días.`} Se guarda en <b>${esc(S.drive.email)}</b>.</p>
+    <div class="btn-row"><button class="btn primary" data-a="driveBackup">Respaldar ahora</button>
+      <button class="btn ghost" data-a="driveLater">Más tarde</button></div>
+  </section>`;
+}
+
+function driveCardHTML() {
+  if (!drive.CLIENT_ID) return '';
+  const d = S.drive;
+  const busy = S.driveBusy ? `<p class="small">⏳ ${esc(S.driveBusy)}</p>` : '';
+  if (!d.email) {
+    return `<section class="card">
+      <span class="lbl">Google Drive</span>
+      <p class="small">Guardá el respaldo completo (games, notas y preferencias) en <b>tu</b> Google Drive, en una carpeta "Smash KPI". Cada persona usa su propia cuenta de Google.</p>
+      <p class="muted small">La app solo puede ver los archivos que ella misma crea en tu Drive: el resto de tu Drive no lo ve.</p>
+      ${busy || `<button class="btn big primary" data-a="driveBackup">Conectar Google Drive y respaldar</button>
+      <button class="btn" data-a="driveRestore">Recuperar un respaldo de Drive</button>`}
+    </section>`;
+  }
+  return `<section class="card ${driveDue() ? 'alert' : ''}">
+    <span class="lbl">Google Drive</span>
+    <p class="small">☁️ Cuenta: <b>${esc(d.email)}</b></p>
+    <p class="small">${d.lastBackup ? `Último respaldo en Drive: <b>${fmtStamp(d.lastBackup)}</b>` : 'Todavía no hiciste un respaldo en Drive.'}</p>
+    ${busy || `<div class="btn-row"><button class="btn big primary" data-a="driveBackup">Respaldar ahora</button>
+      <button class="btn big" data-a="driveRestore">Recuperar</button></div>`}
+    <span class="lbl sub">Recordarme cada ${DRIVE_DAYS} días al abrir la app</span>
+    <div class="chips nums">
+      <button class="chip ${d.remind ? 'on' : ''}" data-a="driveRemind" data-v="on">Sí</button>
+      <button class="chip ${!d.remind ? 'on' : ''}" data-a="driveRemind" data-v="off">No</button>
+    </div>
+    <p class="muted small">Quedan los últimos 10 respaldos; los más viejos van a la papelera de tu Drive.</p>
+    <button class="btn ghost" data-a="driveForget">Desconectar esta cuenta</button>
+  </section>`;
+}
+
 function requestPersist() {
   if (S.persisted || !navigator.storage?.persist) return;
   navigator.storage.persist().then(p => { S.persisted = p; }).catch(() => {});
@@ -1153,6 +1334,8 @@ function renderAjustes() {
     <p class="muted small">Un respaldo JSON exportado desde esta app.</p>
     <label class="btn big file-btn">Elegir archivo JSON<input type="file" accept=".json,.txt,application/json,text/plain" data-in="importFile" hidden></label>
   </section>
+
+  ${driveCardHTML()}
 
   ${sggCardHTML()}
 
@@ -1349,6 +1532,7 @@ function noteDetailHTML() {
   return `
     <div class="note-head"><button class="btn icon" data-a="noteBack" aria-label="volver">‹</button>
       <div><b>${title}</b><small class="muted">${isMu ? esc(muStats(base.myChar, base.oppChar)) : plStats(base.player)}</small></div></div>
+    ${isMu ? '' : `<button class="btn" data-a="scoutOpen" data-v="${esc(base.player)}">🔎 Scouting de ${esc(base.player)} en start.gg</button>`}
     <section class="card">
       <div class="row-between"><span class="lbl">${isMu ? 'Nota del matchup' : 'Nota del jugador'}</span>
         <button class="btn sm" data-a="noteFull" aria-label="pantalla completa">⛶ Pantalla completa</button></div>
@@ -1449,6 +1633,172 @@ function applyMreTemplate(char) {
   toast('Guía de Mr.E agregada a tu nota', 'ok');
 }
 
+// ---------- scouting de rivales (start.gg) ----------
+// En meta 'scout' quedan quién es quién (tag → jugador de start.gg) y los últimos informes, para verlos sin internet en el torneo.
+const SCOUT_MAX = 25;
+let scoutData = null;
+async function loadScout() {
+  scoutData ||= (await db.get('meta', 'scout')) || { people: {}, reports: {} };
+  return scoutData;
+}
+
+const scoutBtnHTML = name => (S.sgg.token && norm(name).length >= 2
+  ? `<button type="button" class="btn sm" data-a="scoutOpen" data-v="${esc(name.trim())}">🔎 Scouting de ${esc(name.trim())} en start.gg</button>` : '');
+
+const scoutStatus = msg => {
+  const b = sheet.querySelector('.scout-body');
+  if (b) b.innerHTML = `<p class="muted">${msg}</p>`;
+  return !!b;
+};
+
+async function openScout(name, force = false) {
+  if (!S.sgg.token) { toast('Conectá tu cuenta de start.gg en Ajustes para usar el scouting', 'err'); return; }
+  await loadScout();
+  const person = scoutData.people[norm(name)];
+  const cached = person && scoutData.reports[person.id];
+  if (cached && !force) { showScout(cached); return; }
+  openReader(`🔎 ${esc(name)}`, 'Scouting en start.gg', '<div class="scout-body"></div>');
+  scoutStatus('Buscando…');
+  try {
+    const who = person || await findScoutPlayer(name);
+    if (!who) {
+      const b = sheet.querySelector('.scout-body');
+      if (b) b.innerHTML = scoutLinkHTML(name);
+      return;
+    }
+    await runScout(name, who);
+  } catch (err) {
+    scoutStatus('No se pudo: ' + esc(err.message));
+  }
+}
+
+// 1) entre tus rivales de torneos; 2) entre los inscriptos de tus últimos torneos
+async function findScoutPlayer(name) {
+  const key = norm(name);
+  if (S.ext && S.sgg.playerId && S.ext.sets.some(s => s.oppPid === undefined)) {
+    scoutStatus('Preparando tu historial de start.gg (solo la primera vez)…');
+    const changed = await sgg.fillOppIds({
+      token: S.sgg.token, playerId: S.sgg.playerId, ext: S.ext,
+      onProgress: (p, t) => scoutStatus(`Preparando tu historial de start.gg (solo la primera vez)… ${p} de ${t}`),
+    });
+    if (changed) await db.put('meta', S.ext, 'sggExt');
+  }
+  const s = S.ext?.sets.find(x => x.oppPid && norm(x.opp) === key);
+  if (s) return { id: s.oppPid, gamerTag: s.opp };
+  const evs = (S.ext?.events || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map(e => e.id);
+  if (!evs.length) return null;
+  scoutStatus('Buscándolo en tus últimos torneos…');
+  return sgg.findInEvents(S.sgg.token, name.trim(), evs);
+}
+
+const scoutLinkHTML = name => `
+  <p>No encontré a <b>${esc(name)}</b> entre tus rivales ni en tus últimos torneos.</p>
+  <p class="muted small">Abrí su perfil en start.gg (tocá su nombre en el bracket), copiá el link (start.gg/user/…) y pegalo acá:</p>
+  <input id="scoutLink" class="inp" placeholder="https://www.start.gg/user/…" autocomplete="off" autocapitalize="off">
+  <button class="btn big primary" data-a="scoutLink" data-v="${esc(name)}">Buscar</button>`;
+
+async function runScout(name, who) {
+  scoutStatus(`Bajando los últimos sets de ${esc(who.gamerTag)}…`);
+  const r = await sgg.scout({
+    token: S.sgg.token, playerId: who.id,
+    onProgress: (p, t) => scoutStatus(`Bajando los últimos sets de ${esc(who.gamerTag)}… ${p} de ${t}`),
+  });
+  const person = { id: r.playerId, gamerTag: r.gamerTag || who.gamerTag };
+  scoutData.people[norm(name)] = person;
+  scoutData.people[norm(person.gamerTag)] = person;
+  scoutData.reports[r.playerId] = r;
+  // quedan solo los informes más recientes
+  const old = Object.values(scoutData.reports).sort((a, b) => b.fetchedAt - a.fetchedAt).slice(SCOUT_MAX);
+  old.forEach(x => delete scoutData.reports[x.playerId]);
+  await db.put('meta', scoutData, 'scout');
+  if (sheet.querySelector('.scout-body')) showScout(r);
+  // ahora se saben sus personajes: se sugieren al cargar
+  if (S.tab === 'cargar' && S.form && $('#oppCharBox')) $('#oppCharBox').innerHTML = oppCharsHTML(S.form);
+}
+
+function showScout(r) {
+  openReader(`🔎 ${esc(r.gamerTag)}`, `start.gg · últimos ${r.sets.length} sets · datos del ${fmtDate(st.ymd(new Date(r.fetchedAt)))}`,
+    `<div class="scout-body">${scoutHTML(r)}</div>`);
+}
+
+// cuenta victorias por clave: [{ k, w, n }]
+function tally(arr, key) {
+  const m = new Map();
+  for (const x of arr) {
+    const k = key(x);
+    if (!k) continue;
+    const e = m.get(k) || { k, w: 0, n: 0 };
+    e.n++; if (x.won) e.w++;
+    m.set(k, e);
+  }
+  return [...m.values()];
+}
+
+function scoutHTML(r) {
+  const sets = r.sets.filter(s => !s.dq);
+  const sw = sets.filter(s => s.won).length, gw = r.games.filter(g => g.won).length;
+  const pct = (w, n) => (n ? Math.round(w / n * 100) + '%' : '—');
+  const wl = (w, n) => `<b class="win">${w}</b>-<b class="loss">${n - w}</b>`;
+  const row = (label, e) => `<div class="sc-row ${e.n >= 2 ? (e.w / e.n >= 0.6 ? 'good' : e.w / e.n <= 0.4 ? 'bad' : '') : ''}">
+    <span>${label}</span><small>${wl(e.w, e.n)} · ${pct(e.w, e.n)}</small></div>`;
+  const chars = tally(r.games, g => g.char).sort((a, b) => b.n - a.n);
+  const stages = tally(r.games, g => g.stage).sort((a, b) => b.w / b.n - a.w / a.n || b.n - a.n);
+  const picks = tally(r.games.filter(g => g.picked), g => g.stage).sort((a, b) => b.n - a.n);
+  const vsMe = (S.ext?.sets || []).filter(s => !s.dq && s.my != null && (s.oppPid === r.playerId || norm(s.opp) === norm(r.gamerTag)));
+  const evName = new Map(r.events.map(e => [e.id, e.name]));
+  const events = r.events.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+  return `
+    <section class="card">
+      <span class="lbl">Resumen</span>
+      <div class="sc-row"><span>Sets</span><small>${wl(sw, sets.length)} · ${pct(sw, sets.length)}</small></div>
+      ${r.games.length ? `<div class="sc-row"><span>Games</span><small>${wl(gw, r.games.length)} · ${pct(gw, r.games.length)}</small></div>` : ''}
+      ${vsMe.length ? `<div class="sc-row"><span>Vos contra ${esc(r.gamerTag)}</span><small>${wl(vsMe.filter(s => s.won).length, vsMe.length)} en sets</small></div>` : ''}
+      ${sets.length < MIN_N ? `<p class="small warn-text">⚠ Solo ${sets.length} sets en start.gg: tomalo como referencia.</p>` : ''}
+    </section>
+    ${r.games.length ? `
+    <section class="card">
+      <span class="lbl">Personajes</span>
+      ${chars.map(e => row(`${esc(e.k)} <small class="muted">${e.n} game${e.n === 1 ? '' : 's'}</small>`, e)).join('')}
+    </section>
+    <section class="card">
+      <span class="lbl">Stages (sus resultados)</span>
+      ${stages.map(e => row(esc(e.k), e)).join('')}
+      ${picks.length ? `<span class="lbl sub">Counterpicks: lo que eligió después de perder un game</span>
+        <div class="chips">${picks.map(e => `<span class="chip sm static">${esc(e.k)} ×${e.n}</span>`).join('')}</div>` : ''}
+    </section>` : '<p class="muted small">Sus torneos no tienen detalle por game (personajes y stages).</p>'}
+    ${events.length ? `<section class="card">
+      <span class="lbl">Torneos recientes</span>
+      ${events.map(e => `<div class="sc-row"><span>${esc(e.name)}<small class="muted"> · ${fmtDate(e.date)}</small></span>
+        <small>${e.placement ? `${e.placement}° de ${e.entrants}` : '—'}</small></div>`).join('')}
+    </section>` : ''}
+    ${sets.length ? `<section class="card">
+      <span class="lbl">Últimos sets</span>
+      ${sets.slice(0, 10).map(s => `<div class="sc-set ${s.won ? 'w' : 'l'}"><b>${s.won ? 'W' : 'L'} ${s.my}-${s.their}</b>
+        <span>vs ${esc(s.opp)}${s.chars.length ? ` · usó ${esc(s.chars.join('/'))}` : ''}<small class="muted">${esc(evName.get(s.event) || '')} · ${esc(s.round || '')}</small></span></div>`).join('')}
+    </section>` : ''}
+    <div class="btn-row">
+      <button class="btn" data-a="scoutRefresh" data-v="${esc(r.gamerTag)}">↻ Actualizar</button>
+      <button class="btn" data-a="scoutToNote" data-v="${r.playerId}">📝 Pasar a su nota</button></div>`;
+}
+
+// resumen en texto para la nota del jugador
+function scoutSummary(r) {
+  const top = (arr, n) => arr.slice(0, n).map(e => `${e.k} (${e.w}-${e.n - e.w})`).join(', ');
+  const chars = tally(r.games, g => g.char).sort((a, b) => b.n - a.n);
+  const stages = tally(r.games, g => g.stage).filter(e => e.n >= 2);
+  const best = stages.slice().sort((a, b) => b.w / b.n - a.w / a.n);
+  const worst = stages.slice().sort((a, b) => a.w / a.n - b.w / b.n);
+  const picks = tally(r.games.filter(g => g.picked), g => g.stage).sort((a, b) => b.n - a.n);
+  const sets = r.sets.filter(s => !s.dq);
+  return [`— Scouting start.gg (${fmtDateLong(st.ymd(new Date(r.fetchedAt)))}) —`,
+    `Últimos sets: ${sets.filter(s => s.won).length}-${sets.filter(s => !s.won).length}`,
+    chars.length && `Personajes: ${top(chars, 3)}`,
+    best.length && `Gana más en: ${top(best, 2)}`,
+    worst.length && `Pierde más en: ${top(worst, 2)}`,
+    picks.length && `Counterpicks: ${picks.slice(0, 3).map(e => `${e.k} ×${e.n}`).join(', ')}`,
+  ].filter(Boolean).join('\n');
+}
+
 function renderNotas() {
   setTitle('Notas');
   if (S.noteOpen) { view.innerHTML = noteDetailHTML(); return; }
@@ -1547,6 +1897,29 @@ const actions = {
     if (d) openReader(`📘 ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
   },
   noteFull: () => openNoteFull(),
+  scoutOpen: t => openScout(t.dataset.v),
+  scoutRefresh: t => openScout(t.dataset.v, true),
+  scoutLink: async t => {
+    const link = sheet.querySelector('#scoutLink')?.value || '';
+    try {
+      scoutStatus('Buscando el perfil…');
+      await runScout(t.dataset.v, await sgg.playerFromLink(S.sgg.token, link));
+    } catch (err) {
+      const b = sheet.querySelector('.scout-body');
+      if (b) b.innerHTML = `<p class="small loss">No se pudo: ${esc(err.message)}</p>${scoutLinkHTML(t.dataset.v)}`;
+    }
+  },
+  scoutToNote: async t => {
+    const r = scoutData?.reports[t.dataset.v];
+    if (!r) return;
+    await flushNote(); // lo que se estaba escribiendo se guarda antes de sumar el resumen
+    const base = plBase(r.gamerTag);
+    const cur = getNote(base.id)?.text || '';
+    await saveNote(base, cur.trim() ? `${cur.trimEnd()}\n\n${scoutSummary(r)}` : scoutSummary(r));
+    closeSheet();
+    openNote(base);
+    toast('Resumen agregado a la nota', 'ok');
+  },
   noteMy: t => { S.noteMy = t.dataset.v; renderNotas(); },
   noteOpen: t => { const n = getNote(t.dataset.v); if (n) openNote({ id: n.id, kind: n.kind, myChar: n.myChar, oppChar: n.oppChar, player: n.player }); },
   noteNewMu: () => openPicker('note'),
@@ -1626,6 +1999,24 @@ const actions = {
   storageHelp: () => openSheet(`<div class="sheet-head"><h2>Que Brave no borre tus datos</h2>
     <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div><div class="sheet-body">${STORAGE_HELP}</div>`),
   freshOk: () => { S.freshDismissed = true; render(); },
+  driveBackup: () => {
+    if (!S.games.length && !S.notes.length) { toast('Todavía no hay datos para respaldar', 'err'); return; }
+    runDrive('backup');
+  },
+  driveRestore: () => runDrive('restore'),
+  driveFile: t => driveFile(t.dataset.v, t.dataset.n),
+  driveLater: () => { S.driveLater = true; render(); },
+  driveRemind: t => { S.drive.remind = t.dataset.v === 'on'; saveDrive(); renderAjustes(); },
+  driveForget: async () => {
+    const ok = await ask('Desconectar Google Drive', `La app deja de usar <b>${esc(S.drive.email)}</b>. Los respaldos que ya están en tu Drive no se borran.`,
+      [{ value: 'y', label: 'Desconectar', cls: 'danger' }]);
+    if (!ok) return;
+    if (driveAuth) drive.revoke(driveAuth.token);
+    driveAuth = null;
+    S.drive = { email: '', lastBackup: null, remind: true };
+    await saveDrive();
+    renderAjustes();
+  },
   sggSaveToken: async () => {
     const token = view.querySelector('[data-in="sggToken"]').value.trim();
     if (!/^[a-z0-9]{20,}$/i.test(token)) { toast('Eso no parece un token de start.gg', 'err'); return; }
@@ -1732,7 +2123,8 @@ view.addEventListener('input', e => {
   if (k === 'rival') {
     S.form.rival = t.value;
     $('#rivalSug').innerHTML = rivalSuggestions();
-    $('#rivalH2H').innerHTML = rivalH2H() + rivalNoteHint();
+    $('#rivalH2H').innerHTML = rivalBoxHTML();
+    $('#oppCharBox').innerHTML = oppCharsHTML(S.form);
   }
   else if (k === 'notes') S.form.notes = t.value;
   else if (k === 'kill' || k === 'death') {
@@ -1750,7 +2142,7 @@ view.addEventListener('input', e => {
 
 view.addEventListener('change', async e => {
   const t = e.target;
-  if (t.closest('.date-pick')) t.previousElementSibling.textContent = t.value ? fmtDateLong(t.value) : 'dd/mm/aaaa';
+  if (t.closest('.date-pick')) t.previousElementSibling.textContent = '📅 ' + (t.value ? fmtDateLong(t.value) : 'dd/mm/aaaa');
   if (t.dataset.filter) { S.filters[t.dataset.filter] = t.value || null; renderStats(); return; }
   const k = t.dataset.in;
   if (k === 'date') S.form.date = t.value || today();
@@ -1783,10 +2175,15 @@ document.querySelector('.tabbar').addEventListener('click', e => {
 });
 
 async function init() {
+  // vuelta de Google con el permiso para Drive (se limpia la dirección enseguida)
+  const driveRet = drive.takeRedirect();
+  if (driveRet) S.tab = 'ajustes';
   try {
-    const [games, settings, lastBackup, focusKpi, notes] = await Promise.all([
+    const [games, settings, lastBackup, focusKpi, notes, driveConf] = await Promise.all([
       db.getAll('games'), db.get('meta', 'settings'), db.get('meta', 'lastBackup'), db.get('meta', 'focusKpi'), db.getAll('notes'),
+      db.get('meta', 'drive'),
     ]);
+    Object.assign(S.drive, driveConf || {});
     S.notes = notes;
     // quita restos del formato de ataques que ya no se usa
     S.games = games.map(g => { if ('attacks' in g) delete g.attacks; return g; });
@@ -1809,6 +2206,8 @@ async function init() {
   }
   S.form = newForm();
   render();
+  if (driveRet?.error) toast('Google Drive: ' + driveRet.error, 'err');
+  else if (driveRet?.token) { driveAuth = driveRet; if (DRIVE_ACTIONS[driveRet.pending]) runDrive(driveRet.pending); }
   requestPersist();
   loadMre();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
@@ -1816,6 +2215,7 @@ async function init() {
   const [stored, sggConf] = await Promise.all([db.get('meta', 'sggExt'), db.get('meta', 'sgg')]);
   Object.assign(S.sgg, sggConf || {});
   S.ext = stored?.format === 'smash-kpi-torneos' ? stored : null;
+  await loadScout();
   if (S.ext) {
     // cada versión nueva agrega sus games una vez (salvo que los hayas quitado en Ajustes)
     const done = await db.get('meta', 'sggImport');
