@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '16';
+const APP_VERSION = '17';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -51,6 +51,8 @@ const S = {
   drive: { email: '', lastBackup: null, remind: true },
   driveBusy: '',
   driveLater: false,
+  dups: [],           // posibles duplicados para revisar: [{ m: set cargado, i: set de start.gg }]
+  dupSkip: [],        // pares marcados como "son distintos" ('setCargado|setStartgg')
 };
 
 // ---------- utilidades ----------
@@ -85,12 +87,21 @@ function fmtKpi(key, v) {
   return String(v);
 }
 
-function toast(msg, kind = '') {
+// action: { label, fn } agrega un botón (ej. "Deshacer") y deja el aviso más tiempo
+function toast(msg, kind = '', action = null) {
   const t = $('#toast');
   t.textContent = msg;
-  t.className = 'toast show ' + kind;
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'toast-btn';
+    b.textContent = action.label;
+    b.onclick = () => { clearTimeout(toast.timer); t.className = 'toast'; action.fn(); };
+    t.append(b);
+  }
+  t.className = `toast show ${kind} ${action ? 'has-action' : ''}`;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { t.className = 'toast'; }, 2600);
+  toast.timer = setTimeout(() => { t.className = 'toast'; }, action ? 6000 : 2600);
 }
 
 function setTitle(t) { $('#title').textContent = t; }
@@ -150,7 +161,7 @@ function newForm() {
     result: null, stocks: stocksFor(S.settings.defaultType), myStocksLeft: null, oppStocksLeft: null,
     myOpenings: 0, oppOpenings: 0, killPercents: [], deathPercents: [], recoveryDeaths: 0,
     limitsCharged: 0, limitsUsed: 0, limitsConverted: 0, notes: '',
-    rpsWinner: null, prevWinner: null, bans: [], stagePicker: null, banFree: false,
+    rpsWinner: null, prevWinner: null, bans: [], stagePicker: null, banFree: false, bo: 3,
   };
 }
 
@@ -158,8 +169,8 @@ function nextForm(g) {
   const inSet = S.games.filter(x => x.setId === g.setId);
   const maxNum = Math.max(...inSet.map(x => x.gameNum), g.gameNum);
   return {
-    ...newForm(), setId: g.setId, gameNum: Math.min(5, maxNum + 1), type: g.type,
-    rival: g.rival, myChar: g.myChar, oppChar: g.oppChar, date: g.date, stocks: g.stocks || 3,
+    ...newForm(), setId: g.setId, gameNum: Math.min(maxGames({ type: g.type, bo: boOf(g) }), maxNum + 1), type: g.type,
+    rival: g.rival, myChar: g.myChar, oppChar: g.oppChar, date: g.date, stocks: g.stocks || 3, bo: boOf(g),
   };
 }
 
@@ -210,6 +221,30 @@ function rivalChars(name) {
   return [...c.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
 }
 
+// Último personaje que usó un rival (en cualquier set, cargado a mano o de start.gg).
+function lastOppChar(name) {
+  const n = norm(name);
+  if (n.length < 2) return '';
+  let best = null;
+  for (const g of S.games) if (g.oppChar && norm(g.rival) === n && (!best || (g.ts || 0) > (best.ts || 0))) best = g;
+  return best?.oppChar || '';
+}
+
+// En un set nuevo, el personaje del rival arranca en el último que usó. Si lo elegiste a mano para este
+// mismo rival, no se toca; si cambiás a otro rival, pasa al último de ese rival. Devuelve true si cambió.
+function autoOppChar(f) {
+  if (S.editingId || setInfo(f.setId).n) return false;
+  const manual = f.oppChar && !f.oppAuto;
+  const last = lastOppChar(f.rival);
+  let v;
+  if (last) v = manual && f.oppPickedFor === norm(f.rival) ? f.oppChar : last;
+  else v = manual ? f.oppChar : ''; // rival nuevo (o a medio escribir): se quita solo lo que se puso solo
+  if (v === f.oppChar) return false;
+  f.oppChar = v;
+  f.oppAuto = !!v;
+  return true;
+}
+
 // Si ya se sabe qué usa el rival, solo se sugieren esos personajes; si no, los que más enfrentás.
 function oppCharsHTML(f) {
   const known = rivalChars(f.rival);
@@ -222,7 +257,7 @@ function oppCharsHTML(f) {
     </div>`;
 }
 
-const rivalBoxHTML = () => rivalH2H() + rivalNoteHint() + scoutBtnHTML(S.form.rival);
+const rivalBoxHTML = () => sggTwinHTML() + rivalH2H() + rivalNoteHint() + scoutBtnHTML(S.form.rival);
 
 const chip = (field, value, label, on, extra = '') =>
   `<button type="button" class="chip ${on ? 'on' : ''} ${extra}" data-a="set" data-f="${field}" data-v="${esc(value)}">${label}</button>`;
@@ -301,6 +336,11 @@ function banPlan(f) {
 }
 
 function currentStep(plan, f) {
+  // "solo el stage jugado": no se anotan los baneos, se pasa directo a quién elige
+  if (S.settings.banMode === 'pick') {
+    const s = plan.steps[plan.steps.length - 1];
+    return { ...s, done: !!f.stage && plan.pool.includes(f.stage) };
+  }
   let done = f.bans.length;
   for (const s of plan.steps) {
     if (s.act === 'ban') {
@@ -390,6 +430,11 @@ function stageSectionHTML(f) {
   const step = plan && !plan.need ? currentStep(plan, f) : null;
   const recs = stageRecords(f);
   const sug = plan ? suggestion(plan, step, f, recs) || [] : [];
+  // sin anotar baneos: igual se sugiere qué te conviene banear cuando te toca
+  const myBans = plan?.steps && S.settings.banMode === 'pick' && !f.stage
+    ? plan.steps.filter(s => s.act === 'ban' && s.who === 'me').reduce((a, s) => a + s.n, 0) : 0;
+  const banStep = { act: 'ban', who: 'me', left: myBans };
+  const banSug = myBans ? suggestion(plan, banStep, f, recs) || [] : [];
   // récord vs el personaje rival en cada stage (verde si ganás más de la mitad, rojo si menos)
   const badge = s => {
     const r = recs?.[s];
@@ -403,7 +448,7 @@ function stageSectionHTML(f) {
   const tile = s => {
     const ban = f.bans.find(b => b.stage === s);
     const on = f.stage === s && !ban;
-    const cls = `${on ? 'on' : ''} ${ban ? 'banned' : ''} ${plan?.need ? 'dim' : ''} ${sug.includes(s) ? `sug ${step.act}` : ''}`;
+    const cls = `${on ? 'on' : ''} ${ban ? 'banned' : ''} ${plan?.need ? 'dim' : ''} ${sug.includes(s) ? `sug ${step.act}` : banSug.includes(s) ? 'sug ban' : ''}`;
     const tag = ban ? `<em class="ban-tag">✕ ${ban.by === 'me' ? 'Vos' : esc(f.rival.trim() || 'Rival')}</em>` : '';
     const label = esc(s === 'Pokémon Stadium 2' ? 'PS2' : s);
     const r = recs?.[s];
@@ -412,12 +457,13 @@ function stageSectionHTML(f) {
       : `<button type="button" class="stage ${cls}" data-a="stageTap" data-v="${esc(s)}">${stageArt(s)}${ban ? '' : badge(s)}${tag}<span>${label}</span></button>`;
   };
   return `<section class="card">
-    ${plan ? banHeaderHTML(plan, f) + suggestionHTML(plan, step, f, recs, sug) : ''}
+    ${plan ? banHeaderHTML(plan, f) + (banSug.length ? suggestionHTML(plan, banStep, f, recs, banSug) : '') + suggestionHTML(plan, step, f, recs, sug) : ''}
     ${groups.map(([group, stages]) => `<span class="lbl">${group}</span>
       <div class="${S.settings.stageStyle === 'text' ? 'chips' : 'stage-grid'}">${stages.map(tile).join('')}</div>`).join('')}
     ${f.type === 'torneo' ? `<div class="ban-tools">
       ${plan && !plan.need && (f.bans.length || f.stage) ? '<button type="button" class="btn sm" data-a="banReset">↺ Reiniciar baneos</button>' : ''}
-      <button type="button" class="btn sm ghost" data-a="banFree">${f.banFree ? 'Usar ayuda de baneos' : 'Elegir sin ayuda'}</button></div>` : ''}
+      <button type="button" class="btn sm ghost" data-a="banFree">${f.banFree ? 'Usar ayuda de baneos' : 'Elegir sin ayuda'}</button>
+      ${plan && !plan.steve ? `<button type="button" class="btn sm ghost" data-a="banMode">${S.settings.banMode === 'pick' ? 'Anotar todos los baneos' : 'Anotar solo el stage'}</button>` : ''}</div>` : ''}
     ${step?.act === 'ban' && f.bans.length ? '<p class="muted small">Tocá el último stage baneado para deshacerlo.</p>' : ''}
   </section>`;
 }
@@ -451,12 +497,17 @@ function renderCargar() {
   const { main, second } = S.settings;
   const otherMine = f.myChar !== main && f.myChar !== second;
   const k = killsKnown(f), d = deathsKnown(f);
+  // del G2 en adelante, lo que ya se sabe del set (tipo, fecha, rival, número de game) queda en una línea
+  const compact = !S.editingId && si.n > 0 && !f.showSet;
+  const bestOf = f.type !== 'casual' ? ` · Bo${f.bo}` : '';
 
   view.innerHTML = `
   ${freshBannerHTML()}
   ${driveBannerHTML()}
-  ${si.n ? `<div class="setbar">Set vs <b>${esc(f.rival)}</b>${si.start ? ` · empezó ${si.start}` : ''} · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando G${f.gameNum}</div>` : ''}
-  <section class="card">
+  ${si.n ? `<div class="setbar"><span>Set vs <b>${esc(f.rival)}</b>${bestOf} · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando <b>G${f.gameNum}</b>${si.start ? ` · empezó ${si.start}` : ''}</span>
+    ${S.editingId ? '' : `<span class="setbar-actions">${compact ? '<button type="button" class="link" data-a="showSet">✎ Cambiar</button>' : ''}
+      <button type="button" class="link" data-a="newSet">Nuevo set</button></span>`}</div>` : ''}
+  ${compact ? '' : `<section class="card">
     <div class="row-between"><span class="lbl">Tipo de partida</span>
       ${dateField(`data-in="date" max="${today()}"`, f.date)}</div>
     <div class="chips">${TYPES.map(([v, l]) => chip('type', v, l, f.type === v)).join('')}</div>
@@ -464,9 +515,10 @@ function renderCargar() {
     <input id="rival" class="inp" data-in="rival" value="${esc(f.rival)}" placeholder="Nombre del rival" autocomplete="off" autocapitalize="words" enterkeyhint="done">
     <div class="chips scroll-x" id="rivalSug">${rivalSuggestions()}</div>
     <div id="rivalH2H">${rivalBoxHTML()}</div>
-    <span class="lbl">Game del set</span>
-    <div class="chips nums">${[1, 2, 3, 4, 5].map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>
-  </section>
+    <div class="row-between"><span class="lbl">Game del set</span>
+      ${f.type !== 'casual' ? `<div class="chips bo">${chip('bo', 3, 'Bo3', f.bo === 3, 'sm')}${chip('bo', 5, 'Bo5', f.bo === 5, 'sm')}</div>` : ''}</div>
+    <div class="chips nums">${Array.from({ length: maxGames(f) }, (_, i) => i + 1).map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>
+  </section>`}
 
   <section class="card">
     <span class="lbl">Mi personaje</span>
@@ -477,24 +529,12 @@ function renderCargar() {
       <button type="button" class="chip ghost" data-a="pickChar" data-v="my">Otro…</button>
     </div>
     <div id="oppCharBox">${oppCharsHTML(f)}</div>
-    ${muNoteHint()}
+    <div id="muHint">${muNoteHint()}</div>
   </section>
 
-  ${stageSectionHTML(f)}
+  <div id="stageBox">${stageSectionHTML(f)}</div>
 
-  <section class="card">
-    <span class="lbl">Resultado</span>
-    <div class="result-row">
-      <button type="button" class="res win ${f.result === 'W' ? 'on' : ''}" data-a="set" data-f="result" data-v="W">Gané</button>
-      <button type="button" class="res loss ${f.result === 'L' ? 'on' : ''}" data-a="set" data-f="result" data-v="L">Perdí</button>
-    </div>
-    ${f.result ? `
-      <span class="lbl">${f.result === 'W' ? 'Stocks que me quedaron' : 'Stocks que le quedaron al rival'}</span>
-      <div class="chips nums">${Array.from({ length: f.stocks }, (_, i) => i + 1).map(n => {
-        const field = f.result === 'W' ? 'myStocksLeft' : 'oppStocksLeft';
-        return chip(field, n, String(n), f[field] === n);
-      }).join('')}</div>` : ''}
-  </section>
+  ${resultHTML(f)}
 
   <section class="card">
     <details class="vod" data-vod ${vodOpen(f) ? 'open' : ''}>
@@ -510,16 +550,17 @@ function renderCargar() {
     </details>
   </section>
 
-  <section class="card">
-    <div class="counters one">${counter('recoveryDeaths', 'Muertes por recovery / edgeguard')}</div>
+  <section class="card ${f.myChar === 'Cloud' ? 'limit' : ''}">
+    <details class="vod" data-more ${S.settings.moreOpen ? 'open' : ''}>
+      <summary><span class="lbl">➕ Recovery${f.myChar === 'Cloud' ? ' y Limit' : ''}</span><span class="muted small" id="moreSum">${moreSummary(f)}</span></summary>
+      <div class="vod-body">
+        <div class="counters one">${counter('recoveryDeaths', 'Muertes por recovery / edgeguard')}</div>
+        ${f.myChar === 'Cloud' ? `<span class="lbl">Limit</span>
+          <div class="counters three">${counter('limitsCharged', 'Cargados')}${counter('limitsUsed', 'Usados')}${counter('limitsConverted', 'Dieron kill')}</div>
+          <p class="muted small">Dieron kill = Limits usados que le sacaron un stock al rival.</p>` : ''}
+      </div>
+    </details>
   </section>
-
-  ${f.myChar === 'Cloud' ? `
-  <section class="card limit">
-    <span class="lbl">Limit</span>
-    <div class="counters three">${counter('limitsCharged', 'Cargados')}${counter('limitsUsed', 'Usados')}${counter('limitsConverted', 'Dieron kill')}</div>
-    <p class="muted small">Dieron kill = Limits usados que le sacaron un stock al rival.</p>
-  </section>` : ''}
 
   <section class="card">
     <details ${f.notes ? 'open' : ''}><summary class="lbl">Notas (opcional)</summary>
@@ -529,8 +570,52 @@ function renderCargar() {
 
   <div class="savebar">
     ${S.editingId ? '<button type="button" class="btn big" data-a="cancelEdit">Cancelar</button>' : ''}
-    <button type="button" class="btn big primary grow" data-a="save">${S.editingId ? 'Guardar cambios' : 'Guardar game'}</button>
+    <button type="button" class="btn big primary grow" data-a="save">${S.editingId ? 'Guardar cambios' : saveLabel(f, si)}</button>
   </div>`;
+}
+
+// Resultado: Gané / Perdí y al lado los stocks que le quedaron al ganador (1, 2, 3).
+function resultHTML(f) {
+  const field = f.result === 'W' ? 'myStocksLeft' : 'oppStocksLeft';
+  const hint = !f.result ? 'Primero: ¿ganaste o perdiste?'
+    : f.result === 'W' ? 'Stocks que <b>te quedaron a vos</b>' : 'Stocks que <b>le quedaron al rival</b>';
+  const tone = f.result === 'W' ? 'win' : f.result === 'L' ? 'loss' : '';
+  const missing = f.result && f[field] == null && !f.imported;
+  return `<section class="card">
+    <span class="lbl">Resultado</span>
+    <div class="res-line">
+      <div class="res-pick">
+        <button type="button" class="res-wl win ${f.result === 'W' ? 'on' : ''}" data-a="set" data-f="result" data-v="W">Gané</button>
+        <button type="button" class="res-wl loss ${f.result === 'L' ? 'on' : ''}" data-a="set" data-f="result" data-v="L">Perdí</button>
+      </div>
+      <div class="res-stocks">
+        <small class="res-hint ${missing ? 'warn-text' : ''}">${hint}</small>
+        <div class="res-grid" style="--n:${f.stocks}">${Array.from({ length: f.stocks }, (_, i) => i + 1).map(k => `
+          <button type="button" class="res-btn ${tone} ${f.result && f[field] === k ? 'on' : ''}" data-a="resStock" data-v="${k}"
+            ${f.result ? '' : 'disabled'}>${k}</button>`).join('')}</div>
+      </div>
+    </div>
+  </section>`;
+}
+
+const moreSummary = f => `Recovery ${f.recoveryDeaths || 0}${f.myChar === 'Cloud' ? ` · Limit ${f.limitsCharged || 0}/${f.limitsUsed || 0}/${f.limitsConverted || 0}` : ''} · opcional`;
+
+// games posibles del set: Bo3 hasta 3, Bo5 hasta 5; casual no tiene formato (como mucho 5)
+const maxGames = f => (f.type === 'casual' || f.bo === 5 ? 5 : 3);
+// formato de un game guardado; los viejos y los de start.gg no lo tienen: si el set llegó a G4, era Bo5
+const boOf = g => g.bo || (S.games.some(x => x.setId === g.setId && x.gameNum > 3) ? 5 : 3);
+
+// ¿este game cierra el set? Bo3 se gana con 2, Bo5 con 3
+function setOver(f, si) {
+  const w = si.w + (f.result === 'W' ? 1 : 0), l = si.l + (f.result === 'L' ? 1 : 0);
+  const need = f.type === 'casual' ? null : (f.bo === 5 ? 3 : 2);
+  return { over: f.gameNum >= maxGames(f) || (!!need && (w >= need || l >= need)), w, l };
+}
+
+function saveLabel(f, si) {
+  if (!f.result) return 'Guardar game';
+  const s = setOver(f, si);
+  return s.over ? `Guardar · fin del set ${s.w}-${s.l}` : `Guardar → G${f.gameNum + 1}`;
 }
 
 function postSaveHTML() {
@@ -552,6 +637,8 @@ function postSaveHTML() {
 
 function updateCounters() {
   view.querySelectorAll('.counter').forEach(c => { c.querySelector('output').textContent = S.form[c.dataset.f] || 0; });
+  const sum = $('#moreSum');
+  if (sum) sum.textContent = moreSummary(S.form);
 }
 
 function bump(field, delta) {
@@ -569,13 +656,16 @@ function bump(field, delta) {
 
 function setField(field, raw) {
   const f = S.form;
-  const v = ['gameNum', 'myStocksLeft', 'oppStocksLeft'].includes(field) ? Number(raw) : raw;
+  const v = ['gameNum', 'myStocksLeft', 'oppStocksLeft', 'bo'].includes(field) ? Number(raw) : raw;
   f[field] = v;
+  if (field === 'oppChar') { f.oppAuto = false; f.oppPickedFor = norm(f.rival); } // elegido a mano para este rival
   if (field === 'result') {
     if (v === 'W') { f.oppStocksLeft = 0; if (!f.myStocksLeft) f.myStocksLeft = null; }
     else { f.myStocksLeft = 0; if (!f.oppStocksLeft) f.oppStocksLeft = null; }
   }
   if (field === 'myChar' && v !== 'Cloud') { f.limitsCharged = f.limitsUsed = f.limitsConverted = 0; }
+  // en Bo3 no existen G4 ni G5
+  if ((field === 'bo' || field === 'type') && f.gameNum > maxGames(f)) f.gameNum = maxGames(f);
   if (field === 'type') {
     f.stocks = stocksFor(v);
     if (f.myStocksLeft > f.stocks) f.myStocksLeft = null;
@@ -599,9 +689,11 @@ function cleanGame(f) {
     notes: f.notes.trim(), sample: f.sample, updatedAt: Date.now(),
     rpsWinner: f.type === 'torneo' ? f.rpsWinner : null, prevWinner: f.type === 'torneo' ? f.prevWinner : null,
     bans: f.type === 'torneo' ? f.bans : [], stagePicker: f.stage ? f.stagePicker : null,
-    vodSkip: !!f.vodSkip,
-    // datos de torneos importados de start.gg
-    ...(f.imported ? { imported: f.imported, event: f.event, eventId: f.eventId, online: f.online, round: f.round } : {}),
+    vodSkip: !!f.vodSkip, bo: f.bo === 5 ? 5 : 3,
+    // datos de start.gg: games importados, o cargados a mano y unidos con su set de start.gg (sggSet)
+    ...(f.imported ? { imported: f.imported } : {}),
+    ...(f.event ? { event: f.event, eventId: f.eventId, online: f.online, round: f.round } : {}),
+    ...(f.sggSet ? { sggSet: f.sggSet } : {}),
     stocksUnknown: f.myStocksLeft == null || f.oppStocksLeft == null,
   };
 }
@@ -629,17 +721,38 @@ async function saveGame() {
     go(S.returnTab || 'historial');
     return;
   }
-  S.lastSaved = g;
-  S.form = null;
+  // carga rápida: pasa directo al siguiente game, o a un set nuevo si el set terminó (con "Deshacer" por si acaso)
+  const before = structuredClone(f);
+  const si = setInfo(g.setId);
+  const bo = boOf(g);
+  const need = g.type === 'casual' ? null : (bo === 5 ? 3 : 2);
+  const over = g.gameNum >= maxGames({ type: g.type, bo }) || (!!need && (si.w >= need || si.l >= need));
+  S.lastSaved = null;
+  S.form = over ? { ...newForm(), date: g.date } : nextForm(g);
   render();
   window.scrollTo(0, 0);
-  toast('Game guardado', 'ok');
+  const msg = over
+    ? `Set ${si.w > si.l ? 'ganado' : si.w < si.l ? 'perdido' : 'terminado'} ${si.w}-${si.l} vs ${g.rival}`
+    : `G${g.gameNum} guardado · set ${si.w}-${si.l}`;
+  toast(msg, 'ok', { label: 'Deshacer', fn: () => undoSave(g.id, before) });
+}
+
+// quita el game recién guardado y vuelve a dejarlo en el formulario para corregirlo
+async function undoSave(id, form) {
+  await db.del('games', id);
+  S.games = S.games.filter(g => g.id !== id);
+  S.form = form;
+  S.editingId = null;
+  S.lastSaved = null;
+  go('cargar');
+  window.scrollTo(0, 0);
+  toast('Deshecho: corregí lo que haga falta y guardá de nuevo');
 }
 
 function editGame(id, returnTab, vodFocus = false) {
   const g = S.games.find(x => x.id === id);
   if (!g) return;
-  S.form = { ...newForm(), ...structuredClone(g), notes: g.notes || '', vodOpen: vodFocus || undefined };
+  S.form = { ...newForm(), ...structuredClone(g), bo: boOf(g), notes: g.notes || '', vodOpen: vodFocus || undefined };
   S.editingId = id;
   S.returnTab = returnTab;
   S.vodFocus = vodFocus;
@@ -1014,11 +1127,12 @@ function gameLine(g) {
 function setCardHTML(s, open, games = s.games) {
   const chars = [...new Set(s.games.map(g => g.oppChar))].join(' / ');
   const mine = [...new Set(s.games.map(g => g.myChar))].join(' / ');
+  const ev = s.games.find(g => g.event); // torneo de start.gg (importado, o cargado a mano y unido)
   return `<article class="card set ${s.decided ? (s.won ? 'won' : 'lost') : ''}">
     <button class="set-head" data-a="toggleSet" data-v="${s.setId}">
       <span class="score"><b class="win">${s.wins}</b>-<b class="loss">${s.losses}</b></span>
       <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small>
-        ${s.games[0].imported ? `<small>🏆 ${esc(s.games[0].event || '')}${s.games[0].round ? ' · ' + esc(s.games[0].round) : ''}</small>` : ''}</span>
+        ${ev ? `<small>🏆 ${esc(ev.event)}${ev.round ? ' · ' + esc(ev.round) : ''}</small>` : ''}</span>
       <span class="set-meta"><small>${fmtDate(s.date)}</small>${setStart(s.games, s.date) ? `<small>🕒 ${setStart(s.games, s.date)}</small>` : ''}<small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
     </button>
     ${open ? `<div class="set-body">${games.map(gameLine).join('')}
@@ -1041,8 +1155,8 @@ function renderHist() {
     const sets = [...st.groupSets(S.games).values()].filter(s => ids.has(s.setId)).sort((a, b) => b.lastTs - a.lastTs);
     view.innerHTML = `${modeChips}
       <p class="muted small">Games de torneo y práctica sin % cargados. Abrí el VOD, tocá <b>Completar %</b> y anotá a qué % cayó cada stock.</p>
-      ${sets.map(s => setCardHTML(s, true, s.games.filter(needsVod))).join('')}
-      <button class="btn ghost" data-a="vodSkipAll">Quitar todos de pendientes</button>`;
+      <button class="btn ghost" data-a="vodSkipAll">Quitar todos de pendientes</button>
+      ${sets.map(s => setCardHTML(s, true, s.games.filter(needsVod))).join('')}`;
     return;
   }
 
@@ -1059,6 +1173,7 @@ function renderHist() {
     .sort((a, b) => b.lastTs - a.lastTs);
   const shown = sets.slice(0, S.histLimit);
   view.innerHTML = `
+    ${dupsCardHTML()}
     ${pending.length ? modeChips : ''}
     ${sourceChips}
     <input class="inp" type="search" data-in="histQuery" value="${esc(S.histQuery)}" placeholder="Buscar rival o personaje…">
@@ -1159,8 +1274,9 @@ async function importFile(file) {
   S.notes = await db.getAll('notes');
   if (data.settings && mode === 'replace') { Object.assign(S.settings, data.settings); await db.put('meta', S.settings, 'settings'); }
   S.games = await db.getAll('games');
+  const merged = await reconcile();
   render();
-  toast(`${games.length} games importados`, 'ok');
+  toast(`${games.length} games importados${merged ? ` · ${mergedMsg(merged)}` : ''}`, 'ok');
 }
 
 // ---------- respaldo en Google Drive ----------
@@ -1275,14 +1391,9 @@ function requestPersist() {
 // Aviso cuando la base arrancó vacía: si ya había datos, los borró el navegador.
 function freshBannerHTML() {
   if (!S.freshDb || S.freshDismissed) return '';
-  return `<section class="card alert">
-    <b>📦 La app arrancó sin datos guardados</b>
-    <p class="small">Si es la primera vez que la abrís, ignorá esto. Si ya tenías games, notas o tu token de start.gg,
-      <b>Brave borró los datos de este sitio</b>. Tus torneos de start.gg se cargan de nuevo solos; lo demás se recupera importando un respaldo.</p>
-    <div class="btn-row"><button class="btn" data-a="storageHelp">Cómo evitarlo</button>
-      <label class="btn file-btn">Importar respaldo<input type="file" accept=".json,.txt,application/json,text/plain" data-in="importFile" hidden></label></div>
-    <button class="btn ghost" data-a="freshOk">Entendido</button>
-  </section>`;
+  return `<div class="mini-alert"><span>📦 La app arrancó sin datos guardados.</span>
+    <button type="button" class="link" data-a="freshInfo">¿Tenías datos?</button>
+    <button type="button" class="btn icon ghost" data-a="freshOk" aria-label="Cerrar aviso">✕</button></div>`;
 }
 
 function storageCardHTML() {
@@ -1353,6 +1464,12 @@ function renderAjustes() {
       <button class="chip ${S.settings.stageStyle !== 'text' ? 'on' : ''}" data-a="setStageStyle" data-v="img">Imágenes</button>
       <button class="chip ${S.settings.stageStyle === 'text' ? 'on' : ''}" data-a="setStageStyle" data-v="text">Texto</button>
     </div>
+    <span class="lbl sub">Baneos en torneo</span>
+    <div class="chips nums">
+      <button class="chip ${S.settings.banMode !== 'pick' ? 'on' : ''}" data-a="banMode" ${S.settings.banMode !== 'pick' ? 'disabled' : ''}>Anotar todos</button>
+      <button class="chip ${S.settings.banMode === 'pick' ? 'on' : ''}" data-a="banMode" ${S.settings.banMode === 'pick' ? 'disabled' : ''}>Solo el stage</button>
+    </div>
+    <p class="muted small">Con "Solo el stage" no anotás los baneos: la app igual te dice a quién le toca y qué te conviene banear y elegir.</p>
   </section>
 
   <section class="card">
@@ -1866,7 +1983,7 @@ const actions = {
   inc: t => bump(t.dataset.f, 1),
   dec: t => bump(t.dataset.f, -1),
   save: () => saveGame(),
-  rivalPick: t => { S.form.rival = t.dataset.v; renderCargar(); },
+  rivalPick: t => { S.form.rival = t.dataset.v; autoOppChar(S.form); renderCargar(); },
   pickChar: t => openPicker(t.dataset.v),
   stageTap: t => stageTap(t.dataset.v),
   setBan: t => { S.form[t.dataset.f] = t.dataset.v || null; renderCargar(); },
@@ -1976,6 +2093,26 @@ const actions = {
   closeSheet: () => closeSheet(),
   answer: t => { const r = sheetResolve; sheetResolve = null; closeSheet(); r && r(t.dataset.v); },
   nextGame: () => { S.form = nextForm(S.lastSaved); S.lastSaved = null; render(); window.scrollTo(0, 0); },
+  resStock: t => {
+    const f = S.form, k = Number(t.dataset.v);
+    if (!f.result) return;
+    if (f.result === 'W') { f.myStocksLeft = k; f.oppStocksLeft = 0; } else { f.oppStocksLeft = k; f.myStocksLeft = 0; }
+    if (navigator.vibrate) navigator.vibrate(15);
+    renderCargar();
+  },
+  showSet: () => { S.form.showSet = true; renderCargar(); },
+  banMode: () => {
+    S.settings.banMode = S.settings.banMode === 'pick' ? 'all' : 'pick';
+    db.put('meta', S.settings, 'settings');
+    if (S.form) Object.assign(S.form, { bans: [], stage: '', stagePicker: null });
+    S.tab === 'cargar' ? renderCargar() : renderAjustes();
+  },
+  freshInfo: () => openSheet(`<div class="sheet-head"><h2>📦 La app arrancó sin datos</h2><button class="btn icon ghost" data-a="closeSheet" aria-label="Cerrar">✕</button></div>
+    <div class="sheet-body"><p class="small">Si es la primera vez que la abrís, ignorá esto. Si ya tenías games, notas o tu token de start.gg,
+      <b>el navegador borró los datos de este sitio</b>. Tus torneos de start.gg se cargan de nuevo solos; lo demás se recupera importando un respaldo.</p>
+      <button class="btn" data-a="storageHelp">Cómo evitar que pase</button>
+      <label class="btn file-btn">Importar respaldo<input type="file" accept=".json,.txt,application/json,text/plain" data-in="importFile" hidden></label>
+      ${drive.CLIENT_ID ? '<button class="btn" data-a="driveRestore">Recuperar desde Google Drive</button>' : ''}</div>`),
   newSet: () => { S.form = newForm(); S.lastSaved = null; render(); window.scrollTo(0, 0); },
   editLast: () => { const id = S.lastSaved.id; S.lastSaved = null; editGame(id, 'cargar'); },
   cancelEdit: () => {
@@ -1994,7 +2131,36 @@ const actions = {
     renderStats();
   },
   statsTab: t => { S.statsTab = t.dataset.v; renderStats(); },
-  sggImport: async () => { await importStartgg('always'); renderAjustes(); },
+  sggImport: async () => {
+    await importStartgg('always');
+    const merged = await reconcile();
+    if (merged) toast(mergedMsg(merged), 'ok');
+    renderAjustes();
+  },
+  dupReview: () => openSheet(dupSheetHTML()),
+  dupMerge: async t => {
+    const [m, i] = t.dataset.v.split('|');
+    const sets = st.groupSets(S.games);
+    if (!sets.get(m) || !sets.get(i)) return;
+    await mergeSets(sets.get(m), sets.get(i));
+    await reconcile();
+    refreshDups();
+    toast('Sets unidos', 'ok');
+  },
+  dupSkip: async t => {
+    if (!S.dupSkip.includes(t.dataset.v)) S.dupSkip.push(t.dataset.v);
+    await db.put('meta', S.dupSkip, 'dupSkip');
+    S.dups = S.dups.filter(d => `${d.m}|${d.i}` !== t.dataset.v);
+    refreshDups();
+  },
+  openTwin: t => {
+    const s = st.groupSets(S.games).get(t.dataset.v);
+    if (!s) return;
+    Object.assign(S, { histMode: 'all', histSource: 'all', histQuery: s.rival, histLimit: 25 });
+    S.histOpen.add(s.setId);
+    go('historial');
+    view.querySelector(`.set-head[data-v="${CSS.escape(s.setId)}"]`)?.scrollIntoView({ block: 'start' });
+  },
   sggSync: () => runSync(true),
   storageHelp: () => openSheet(`<div class="sheet-head"><h2>Que Brave no borre tus datos</h2>
     <button class="btn icon" data-a="closeSheet" aria-label="cerrar">✕</button></div><div class="sheet-body">${STORAGE_HELP}</div>`),
@@ -2122,9 +2288,16 @@ view.addEventListener('input', e => {
   if (!k) return;
   if (k === 'rival') {
     S.form.rival = t.value;
+    const changed = autoOppChar(S.form);
     $('#rivalSug').innerHTML = rivalSuggestions();
     $('#rivalH2H').innerHTML = rivalBoxHTML();
     $('#oppCharBox').innerHTML = oppCharsHTML(S.form);
+    // cambió el personaje del rival: se actualizan la nota del matchup y los stages, sin tocar el campo que estás escribiendo
+    if (changed) {
+      syncBans(S.form);
+      $('#muHint').innerHTML = muNoteHint();
+      $('#stageBox').innerHTML = stageSectionHTML(S.form);
+    }
   }
   else if (k === 'notes') S.form.notes = t.value;
   else if (k === 'kill' || k === 'death') {
@@ -2158,7 +2331,17 @@ view.addEventListener('change', async e => {
 // recuerda si la sección de VOD quedó abierta o cerrada (toggle no burbujea: se escucha en captura)
 view.addEventListener('toggle', e => {
   if (S.form && e.target.matches?.('[data-vod]')) S.form.vodOpen = e.target.open;
+  // "Recovery y Limit": queda abierto o cerrado como lo dejaste, para todos los games
+  if (e.target.matches?.('[data-more]') && S.settings.moreOpen !== e.target.open) {
+    S.settings.moreOpen = e.target.open;
+    db.put('meta', S.settings, 'settings');
+  }
 }, true);
+
+// importar un respaldo desde una hoja (aviso de "la app arrancó sin datos")
+sheet.addEventListener('change', async e => {
+  if (e.target.dataset.in === 'importFile' && e.target.files[0]) { const file = e.target.files[0]; closeSheet(); await importFile(file); }
+});
 
 // Enter en un campo de % pasa al siguiente
 view.addEventListener('keydown', e => {
@@ -2179,11 +2362,12 @@ async function init() {
   const driveRet = drive.takeRedirect();
   if (driveRet) S.tab = 'ajustes';
   try {
-    const [games, settings, lastBackup, focusKpi, notes, driveConf] = await Promise.all([
+    const [games, settings, lastBackup, focusKpi, notes, driveConf, dupSkip] = await Promise.all([
       db.getAll('games'), db.get('meta', 'settings'), db.get('meta', 'lastBackup'), db.get('meta', 'focusKpi'), db.getAll('notes'),
-      db.get('meta', 'drive'),
+      db.get('meta', 'drive'), db.get('meta', 'dupSkip'),
     ]);
     Object.assign(S.drive, driveConf || {});
+    S.dupSkip = Array.isArray(dupSkip) ? dupSkip : [];
     S.notes = notes;
     // quita restos del formato de ataques que ya no se usa
     S.games = games.map(g => { if ('attacks' in g) delete g.attacks; return g; });
@@ -2220,8 +2404,11 @@ async function init() {
     // cada versión nueva agrega sus games una vez (salvo que los hayas quitado en Ajustes)
     const done = await db.get('meta', 'sggImport');
     if (done !== extVersion() && done !== 'off') await importStartgg('ifAny');
-    if (S.tab !== 'cargar') render();
   }
+  // sets cargados a mano que también bajaron de start.gg
+  const merged = await reconcile();
+  if (merged) toast(mergedMsg(merged), 'ok');
+  if (S.tab !== 'cargar') render();
   // actualización automática: una vez por día si hay token e internet
   const due = !S.sgg.lastSync || Date.now() - S.sgg.lastSync > DAY;
   if (S.sgg.auto && S.sgg.token && navigator.onLine && due) runSync(false);
@@ -2266,9 +2453,13 @@ async function runSync(manual) {
     await db.put('meta', S.ext, 'sggExt');
     const importOn = (await db.get('meta', 'sggImport')) !== 'off';
     if (importOn) await importStartgg('never');
+    const merged = await reconcile();
     S.sgg.lastSync = Date.now();
     S.sgg.lastError = null;
-    if (add.sets.length || manual) toast(add.sets.length ? `start.gg: ${add.sets.length} sets nuevos (${add.games.length} games)` : 'start.gg: no hay torneos nuevos', 'ok');
+    if (add.sets.length || manual) {
+      toast((add.sets.length ? `start.gg: ${add.sets.length} sets nuevos (${add.games.length} games)` : 'start.gg: no hay torneos nuevos')
+        + (merged ? ` · ${mergedMsg(merged)}` : ''), 'ok');
+    }
   } catch (err) {
     S.sgg.lastError = err.message;
     if (manual) toast('No se pudo actualizar: ' + err.message, 'err');
@@ -2289,10 +2480,166 @@ const expandImported = g => ({
 // toast: 'always' (botón), 'ifAny' (al abrir la app) o 'never' (lo avisa la sincronización)
 async function importStartgg(toastMode = 'ifAny') {
   const have = new Set(S.games.map(g => g.id));
-  const add = S.ext.games.filter(g => !have.has(g.id)).map(expandImported);
+  // los sets ya unidos con uno cargado a mano no se vuelven a agregar
+  const linked = linkedSggSets();
+  const add = S.ext.games.filter(g => !have.has(g.id) && !linked.has(g.setId)).map(expandImported);
   if (add.length) { await db.putMany('games', add); S.games.push(...add); }
   await db.put('meta', extVersion(), 'sggImport');
   if (toastMode === 'always' || (toastMode === 'ifAny' && add.length)) toast(`${add.length} games de torneos importados de start.gg`, 'ok');
+}
+
+// ---------- sets cargados a mano que también bajaron de start.gg ----------
+// Se unen en uno solo: el set cargado a mano queda como principal (baneos, %, openings, Limit, notas) y se le suma
+// lo de start.gg (torneo, ronda, online, stage o stocks si faltaban, y los games que no cargaste).
+// Sus games guardan sggSet (el set de start.gg): así no se vuelve a agregar, ni siquiera al importar un respaldo.
+const isSggSet = id => String(id).startsWith('sgg-');
+const rivalKey = s => norm(String(s || '').split('|').pop());
+const nearDate = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) <= DAY; // torneos que terminan de madrugada
+const linkedSggSets = () => new Set(S.games.filter(g => g.sggSet).map(g => g.sggSet));
+
+// cada game cargado coincide con el de start.gg del mismo número (resultado, y personajes y stage si los dos los tienen)
+function sameGames(m, i) {
+  if (!m.games.length || m.games.length > i.games.length) return false;
+  return m.games.every(g => {
+    const x = i.games.find(y => y.gameNum === g.gameNum);
+    return x && x.result === g.result
+      && (!g.stage || !x.stage || g.stage === x.stage)
+      && (!x.myChar || g.myChar === x.myChar)
+      && (!x.oppChar || g.oppChar === x.oppChar);
+  });
+}
+
+// Pares (set cargado, set de start.gg) del mismo rival con un día de diferencia como mucho.
+// strong: modo Torneo y todo coincide, sin otro candidato posible → se unen solos. El resto se pregunta.
+function dupPairs() {
+  const sets = [...st.groupSets(S.games.filter(g => !g.sample)).values()];
+  const linked = linkedSggSets();
+  const manualByRival = new Map();
+  for (const m of sets) {
+    if (isSggSet(m.setId) || m.games.some(g => g.sggSet)) continue;
+    const k = rivalKey(m.rival);
+    manualByRival.set(k, [...(manualByRival.get(k) || []), m]);
+  }
+  const pairs = [];
+  for (const i of sets) {
+    if (!isSggSet(i.setId) || linked.has(i.setId)) continue;
+    for (const m of manualByRival.get(rivalKey(i.rival)) || []) {
+      if (!nearDate(m.date, i.date) || S.dupSkip.includes(`${m.setId}|${i.setId}`)) continue;
+      pairs.push({ m, i, strong: m.type === 'torneo' && sameGames(m, i) });
+    }
+  }
+  const strongWith = id => pairs.filter(p => p.strong && (p.m.setId === id || p.i.setId === id)).length;
+  const ambiguous = pairs.filter(p => p.strong && (strongWith(p.m.setId) > 1 || strongWith(p.i.setId) > 1));
+  ambiguous.forEach(p => { p.strong = false; });
+  return pairs;
+}
+
+async function mergeSets(m, i) {
+  const now = Date.now();
+  const info = i.games[0];
+  const put = [], del = [];
+  for (const g of m.games) {
+    const x = i.games.find(y => y.gameNum === g.gameNum);
+    Object.assign(g, { sggSet: i.setId, event: info.event, eventId: info.eventId, online: info.online, round: info.round, updatedAt: now });
+    if (x) {
+      // si no coincide, queda lo de start.gg (es lo oficial); los datos extra cargados a mano no se tocan
+      if (x.result !== g.result) Object.assign(g, { result: x.result, myStocksLeft: x.myStocksLeft, oppStocksLeft: x.oppStocksLeft });
+      else if ((g.myStocksLeft == null || g.oppStocksLeft == null) && x.myStocksLeft != null && x.oppStocksLeft != null) {
+        Object.assign(g, { myStocksLeft: x.myStocksLeft, oppStocksLeft: x.oppStocksLeft });
+      }
+      if (x.myChar) g.myChar = x.myChar;
+      if (x.oppChar) g.oppChar = x.oppChar;
+      if (x.stage) g.stage = x.stage;
+      g.stocksUnknown = g.myStocksLeft == null || g.oppStocksLeft == null;
+      del.push(x.id);
+    }
+    put.push(g);
+  }
+  // los games que no cargaste pasan al set cargado, con sus datos de start.gg
+  const nums = new Set(m.games.map(g => g.gameNum));
+  for (const x of i.games) {
+    if (nums.has(x.gameNum)) continue;
+    Object.assign(x, { setId: m.setId, rival: m.rival, date: m.date, type: m.type, sggSet: i.setId, updatedAt: now });
+    put.push(x);
+  }
+  await db.putMany('games', put);
+  await db.delMany('games', del);
+  const gone = new Set(del);
+  S.games = S.games.filter(g => !gone.has(g.id));
+}
+
+// Une los duplicados seguros y deja el resto en S.dups para revisar. Devuelve cuántos sets unió.
+async function reconcile() {
+  // un respaldo viejo puede traer de vuelta los games de start.gg de un set que ya está unido
+  const linked = linkedSggSets();
+  const stale = S.games.filter(g => isSggSet(g.setId) && linked.has(g.setId)).map(g => g.id);
+  if (stale.length) {
+    await db.delMany('games', stale);
+    const gone = new Set(stale);
+    S.games = S.games.filter(g => !gone.has(g.id));
+  }
+  const pairs = dupPairs();
+  const strong = pairs.filter(p => p.strong);
+  for (const p of strong) await mergeSets(p.m, p.i);
+  const used = new Set(strong.flatMap(p => [p.m.setId, p.i.setId]));
+  S.dups = pairs.filter(p => !p.strong && !used.has(p.m.setId) && !used.has(p.i.setId)).map(p => ({ m: p.m.setId, i: p.i.setId }));
+  return strong.length;
+}
+
+const mergedMsg = n => `${n} set${n === 1 ? '' : 's'} de start.gg unido${n === 1 ? '' : 's'} con lo que cargaste a mano`;
+
+function dupsCardHTML() {
+  if (!S.dups.length) return '';
+  const n = S.dups.length;
+  return `<section class="card alert">
+    <b>⚠ ${n} posible${n === 1 ? '' : 's'} duplicado${n === 1 ? '' : 's'}</b>
+    <p class="small">${n === 1 ? 'Un set que cargaste a mano también bajó' : 'Sets que cargaste a mano también bajaron'} de start.gg, pero no ${n === 1 ? 'coincide' : 'coinciden'} del todo. ${n === 1 ? 'Revisalo' : 'Revisalos'} para no contarlos dos veces.</p>
+    <button class="btn" data-a="dupReview">Revisar</button>
+  </section>`;
+}
+
+function dupSheetHTML() {
+  const sets = st.groupSets(S.games);
+  const side = (s, title) => `<div class="dup-side"><small class="muted">${title}</small>
+    <b>vs ${esc(s.rival)}</b><small class="muted">${fmtDate(s.date)} · ${TYPE_LABEL[s.type] || s.type}</small>
+    ${s.games.map(g => `<small>G${g.gameNum} <b class="${g.result === 'W' ? 'win' : 'loss'}">${g.result}</b> ${esc(g.myChar)} vs ${esc(g.oppChar)}${g.stage ? ` · ${esc(g.stage === 'Pokémon Stadium 2' ? 'PS2' : g.stage)}` : ''}</small>`).join('')}</div>`;
+  const items = S.dups.map(({ m, i }) => {
+    const M = sets.get(m), I = sets.get(i);
+    if (!M || !I) return '';
+    const ev = I.games[0];
+    return `<div class="dup-pair">
+      <div class="dup-cols">${side(M, '✍️ Cargado por vos')}${side(I, `🏆 ${esc(ev.event || 'start.gg')}${ev.round ? ' · ' + esc(ev.round) : ''}`)}</div>
+      <div class="btn-row"><button class="btn primary" data-a="dupMerge" data-v="${esc(m)}|${esc(i)}">Unir</button>
+        <button class="btn" data-a="dupSkip" data-v="${esc(m)}|${esc(i)}">Son distintos</button></div>
+    </div>`;
+  }).join('');
+  return `<div class="sheet-head"><h2>Posibles duplicados</h2><button class="btn icon ghost" data-a="closeSheet" aria-label="Cerrar">✕</button></div>
+    <div class="sheet-body">
+      <p class="muted small">Al unir queda un solo set con tus baneos, %, openings, Limit y notas. Si algo no coincide, el resultado, los personajes y el stage quedan como en start.gg, que es lo oficial.</p>
+      ${items || '<p class="empty">No quedan duplicados para revisar.</p>'}
+    </div>`;
+}
+
+const refreshDups = () => {
+  if (!sheet.classList.contains('hidden') && sheet.querySelector('.dup-pair, .empty')) {
+    if (S.dups.length) sheet.querySelector('.sheet-panel').innerHTML = dupSheetHTML(); else closeSheet();
+  }
+  if (S.tab === 'historial') renderHist();
+};
+
+// Al empezar a cargar un set de torneo que ya bajó de start.gg (mismo rival, mismo día): mejor completarlo que duplicarlo.
+function sggTwinHTML() {
+  const f = S.form;
+  if (!f || S.editingId || f.type !== 'torneo' || rivalKey(f.rival).length < 2 || setInfo(f.setId).n) return '';
+  const twin = [...st.groupSets(S.games.filter(g => isSggSet(g.setId))).values()]
+    .filter(s => rivalKey(s.rival) === rivalKey(f.rival) && nearDate(s.date, f.date))
+    .sort((a, b) => b.lastTs - a.lastTs)[0];
+  if (!twin) return '';
+  const ev = twin.games[0];
+  return `<div class="h2h twin">🏆 Este set ya bajó de start.gg: <b>${esc(ev.event || '')}</b>${ev.round ? ` · ${esc(ev.round)}` : ''} ·
+    <b class="${twin.wins > twin.losses ? 'win' : 'loss'}">${twin.wins}-${twin.losses}</b>
+    <small>En vez de cargarlo de nuevo, completalo (baneos, %, notas) editando sus games.</small>
+    <button type="button" class="btn sm" data-a="openTwin" data-v="${esc(twin.setId)}">Completar ese set</button></div>`;
 }
 
 init();
