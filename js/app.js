@@ -44,6 +44,7 @@ const S = {
   mreOpen: null,      // título de la guía abierta
   histOpen: new Set(),
   histLimit: 25,
+  histSource: 'all',
 };
 
 // ---------- utilidades ----------
@@ -52,6 +53,18 @@ const today = () => st.ymd(new Date());
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const fmtDate = s => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y.slice(2)}`; };
+const fmtDateLong = s => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
+const hhmm = ts => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// el selector de fecha del sistema puede mostrar mes/día/año: se tapa con el texto en día/mes/año
+const dateField = (attrs, value) => `<label class="inp date-pick"><span>${value ? fmtDateLong(value) : 'dd/mm/aaaa'}</span>
+  <input type="date" ${attrs} value="${value || ''}"></label>`;
+// hora en que se guardó el primer game del set (los importados de start.gg no la tienen; si se cargó otro día, tampoco)
+function setStart(games, date) {
+  const own = games.filter(g => !g.imported && g.ts);
+  if (!own.length) return '';
+  const t = Math.min(...own.map(g => g.ts));
+  return st.ymd(new Date(t)) === date ? hhmm(t) : '';
+}
 const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return st.ymd(d); };
 
 function fmtKpi(key, v) {
@@ -162,7 +175,7 @@ const needsVod = g => g.type !== 'casual' && !g.vodSkip && !hasVodData(g);
 
 function setInfo(setId, excludeId) {
   const gs = S.games.filter(g => g.setId === setId && g.id !== excludeId);
-  return { n: gs.length, w: gs.filter(g => g.result === 'W').length, l: gs.filter(g => g.result === 'L').length };
+  return { n: gs.length, w: gs.filter(g => g.result === 'W').length, l: gs.filter(g => g.result === 'L').length, start: setStart(gs, gs[0]?.date) };
 }
 
 function rivalsByRecency() {
@@ -361,10 +374,10 @@ function renderCargar() {
 
   view.innerHTML = `
   ${freshBannerHTML()}
-  ${si.n ? `<div class="setbar">Set vs <b>${esc(f.rival)}</b> · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando G${f.gameNum}</div>` : ''}
+  ${si.n ? `<div class="setbar">Set vs <b>${esc(f.rival)}</b>${si.start ? ` · empezó ${si.start}` : ''} · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando G${f.gameNum}</div>` : ''}
   <section class="card">
     <div class="row-between"><span class="lbl">Tipo de partida</span>
-      <input type="date" class="inp date" data-in="date" value="${f.date}" max="${today()}"></div>
+      ${dateField(`data-in="date" max="${today()}"`, f.date)}</div>
     <div class="chips">${TYPES.map(([v, l]) => chip('type', v, l, f.type === v)).join('')}</div>
     <label class="lbl" for="rival">Rival</label>
     <input id="rival" class="inp" data-in="rival" value="${esc(f.rival)}" placeholder="Nombre del rival" autocomplete="off" autocapitalize="words" enterkeyhint="done">
@@ -618,8 +631,8 @@ function filtersHTML() {
         ${sel('type', 'Tipo', TYPES.map(t => t[0]), TYPE_LABEL)}
         ${sel('source', 'Origen', ['app', 'startgg'], { app: 'Cargados en la app', startgg: 'Torneos (start.gg)' })}
         ${sel('online', 'Modalidad', ['offline', 'online'], { offline: 'Offline', online: 'Online' })}
-        <label class="f-field"><span>Desde</span><input type="date" class="inp" data-filter="from" value="${F.from || ''}"></label>
-        <label class="f-field"><span>Hasta</span><input type="date" class="inp" data-filter="to" value="${F.to || ''}"></label>
+        <div class="f-field"><span>Desde</span>${dateField('data-filter="from"', F.from)}</div>
+        <div class="f-field"><span>Hasta</span>${dateField('data-filter="to"', F.to)}</div>
       </div>
       <button class="btn ghost" data-a="clearFilters">Limpiar filtros</button>
     </section>` : ''}`;
@@ -929,7 +942,7 @@ function setCardHTML(s, open, games = s.games) {
       <span class="score"><b class="win">${s.wins}</b>-<b class="loss">${s.losses}</b></span>
       <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small>
         ${s.games[0].imported ? `<small>🏆 ${esc(s.games[0].event || '')}${s.games[0].round ? ' · ' + esc(s.games[0].round) : ''}</small>` : ''}</span>
-      <span class="set-meta"><small>${fmtDate(s.date)}</small><small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
+      <span class="set-meta"><small>${fmtDate(s.date)}</small>${setStart(s.games, s.date) ? `<small>🕒 ${setStart(s.games, s.date)}</small>` : ''}<small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
     </button>
     ${open ? `<div class="set-body">${games.map(gameLine).join('')}
       ${S.histMode === 'vod' ? '' : `<button class="btn" data-a="addToSet" data-v="${s.setId}">+ Agregar game a este set</button>`}</div>` : ''}
@@ -956,12 +969,21 @@ function renderHist() {
     return;
   }
 
+  // origen: cargados a mano o importados de start.gg (solo si hay de los dos)
+  const nImported = S.games.filter(g => g.imported).length;
+  if (!nImported || nImported === S.games.length) S.histSource = 'all';
+  const src = (v, l, n) => `<button class="chip sm ${S.histSource === v ? 'on' : ''}" data-a="histSource" data-v="${v}">${l} (${n})</button>`;
+  const sourceChips = nImported && nImported < S.games.length ? `<div class="chips">${src('all', 'Todos', S.games.length)}
+    ${src('app', '✍️ Cargados por mí', S.games.length - nImported)}${src('startgg', '🏆 start.gg', nImported)}</div>` : '';
+
   const sets = [...st.groupSets(S.games).values()]
+    .filter(s => S.histSource === 'all' || !!s.games[0].imported === (S.histSource === 'startgg'))
     .filter(s => !q || norm(s.rival).includes(q) || s.games.some(g => norm(g.oppChar).includes(q) || norm(g.myChar).includes(q)))
     .sort((a, b) => b.lastTs - a.lastTs);
   const shown = sets.slice(0, S.histLimit);
   view.innerHTML = `
     ${pending.length ? modeChips : ''}
+    ${sourceChips}
     <input class="inp" type="search" data-in="histQuery" value="${esc(S.histQuery)}" placeholder="Buscar rival o personaje…">
     <p class="muted small">${sets.length} sets · ${sets.reduce((a, s) => a + s.games.length, 0)} games</p>
     ${shown.map(s => setCardHTML(s, S.histOpen.has(s.setId))).join('') || '<p class="empty">No hay games.</p>'}
@@ -974,7 +996,7 @@ function backupData() {
 }
 
 function csvData() {
-  const cols = ['fecha', 'tipo', 'set', 'game', 'rival', 'mi_personaje', 'personaje_rival', 'stage', 'resultado',
+  const cols = ['fecha', 'hora_inicio_set', 'tipo', 'set', 'game', 'rival', 'mi_personaje', 'personaje_rival', 'stage', 'resultado',
     'mis_stocks', 'stocks_rival', 'mis_openings', 'openings_rival', 'pct_kills', 'pct_muertes', 'muertes_recovery',
     'limits_cargados', 'limits_usados', 'limits_convertidos', 'eligio_stage', 'baneos', 'notas'];
   const setMap = st.groupSets(S.games);
@@ -982,7 +1004,7 @@ function csvData() {
   const setNum = new Map(sets.map((s, i) => [s.setId, i + 1]));
   const cell = v => { const s = String(v ?? ''); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const rows = S.games.slice().sort((a, b) => a.ts - b.ts).map(g => [
-    g.date, g.type, setNum.get(g.setId), g.gameNum, g.rival, g.myChar, g.oppChar, g.stage, g.result === 'W' ? 'ganado' : 'perdido',
+    fmtDateLong(g.date), setStart(setMap.get(g.setId).games, setMap.get(g.setId).date), g.type, setNum.get(g.setId), g.gameNum, g.rival, g.myChar, g.oppChar, g.stage, g.result === 'W' ? 'ganado' : 'perdido',
     g.myStocksLeft, g.oppStocksLeft, g.myOpenings, g.oppOpenings,
     (g.killPercents || []).filter(v => v != null).join('|'), (g.deathPercents || []).filter(v => v != null).join('|'),
     g.recoveryDeaths, g.limitsCharged, g.limitsUsed, g.limitsConverted,
@@ -1639,6 +1661,7 @@ const actions = {
   mSort: t => { S.mSort = t.dataset.v; renderStats(); },
   toggleSet: t => { const id = t.dataset.v; S.histOpen.has(id) ? S.histOpen.delete(id) : S.histOpen.add(id); renderHist(); },
   more: () => { S.histLimit += 25; renderHist(); },
+  histSource: t => { S.histSource = t.dataset.v; S.histLimit = 25; renderHist(); window.scrollTo(0, 0); },
   edit: t => editGame(t.dataset.v, 'historial'),
   vodFill: t => editGame(t.dataset.v, 'historial', true),
   vodSkip: t => skipVod([t.dataset.v]),
@@ -1696,6 +1719,8 @@ function onClick(e) {
   if (t && actions[t.dataset.a]) actions[t.dataset.a](t, e);
 }
 view.addEventListener('click', onClick);
+// en PC, tocar el texto de la fecha también abre el calendario
+view.addEventListener('click', e => { if (e.target.matches('.date-pick input')) try { e.target.showPicker(); } catch {} });
 sheet.addEventListener('click', onClick);
 // escribir en la nota a pantalla completa
 sheet.addEventListener('input', e => { if (e.target.dataset.in === 'noteText') queueNote(e.target.value); });
@@ -1725,6 +1750,7 @@ view.addEventListener('input', e => {
 
 view.addEventListener('change', async e => {
   const t = e.target;
+  if (t.closest('.date-pick')) t.previousElementSibling.textContent = t.value ? fmtDateLong(t.value) : 'dd/mm/aaaa';
   if (t.dataset.filter) { S.filters[t.dataset.filter] = t.value || null; renderStats(); return; }
   const k = t.dataset.in;
   if (k === 'date') S.form.date = t.value || today();
