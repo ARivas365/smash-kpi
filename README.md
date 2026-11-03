@@ -54,6 +54,7 @@ Para probar que anda offline, poné el modo avión y abrila desde el ícono.
 - **Ajustes → Respaldo completo → Compartir** abre el menú de compartir de Android: mandalo a WhatsApp (por ejemplo, a tu propio chat) o guardalo en Drive.
 - Para recuperar: **Ajustes → Importar → Elegir archivo JSON** y elegí *Combinar* o *Reemplazar*.
 - Si compartir un `.json` no está disponible, la app lo manda como `.json.txt`. Se importa igual.
+- **Google Drive:** **Ajustes → Google Drive → Conectar Google Drive y respaldar**. Cada persona usa su propia cuenta de Google y el respaldo queda en una carpeta "Smash KPI" de su Drive (la app solo ve esa carpeta). Si pasan 14 días, al abrir la app aparece un aviso para respaldar con un toque. **Recuperar** lista los últimos 10 respaldos para importarlos.
 
 ---
 
@@ -70,7 +71,7 @@ Los datos no se tocan al actualizar.
 
 | Pestaña | Para qué |
 |---|---|
-| **Cargar** | Un game en menos de un minuto. Al guardar: **Siguiente game del set** (copia rival, personajes y set) o **Nuevo set**. En **Torneo** te guía con los baneos de stages (G1: piedra, papel o tijeras 1-2-1; G2+: el ganador banea 3 y el perdedor elige; con un solo Steve, elige el que no usa Steve). |
+| **Cargar** | Un game en menos de un minuto. Al guardar: **Siguiente game del set** (copia rival, personajes y set) o **Nuevo set**. En **Torneo** te guía con los baneos de stages (G1: piedra, papel o tijeras 1-2-1; G2+: el ganador banea 3 y el perdedor elige; con un solo Steve, elige el que no usa Steve). Cuando te toca banear o elegir, te sugiere qué stages según tu récord con tu personaje vs el del rival, y cada stage muestra ese récord. |
 | **Estadísticas** | Filtros, Foco de la semana, KPIs, patrones (por game, remontadas, quién eligió el stage, cansancio), gráficos por semana, **Matchups** y **Stages** (los peores en rojo) y **Cloud vs Steve**. |
 | **Historial** | Sets agrupados. Tocá uno para ver sus games, **editarlos**, **borrarlos** o agregar otro game. |
 | **Notas** | Notas por **matchup** (ej. Cloud vs Pikachu) y por **jugador**, con tu récord arriba y las notas de los games que les corresponden. También todas las notas de games con buscador y las **guías de Mr.E** (81 personajes + fundamentos), que se pueden usar como base de una nota de matchup. Al cargar un game, si tenés nota del rival o del matchup, aparece un resumen. |
@@ -84,6 +85,8 @@ Los datos no se tocan al actualizar.
 - La app no trae datos de nadie: cada persona conecta su cuenta y baja sus propios torneos (stage, personajes y resultado de cada game), que se suman a sus estadísticas. Filtrá por **Origen** para separarlos de lo que cargás a mano.
 - **Ajustes → Torneos de start.gg** → pegá un token de la API (start.gg → perfil → Developer Settings → Create new token) → **Guardar y bajar mis torneos**. La app detecta sola de quién es el token (no hace falta buscar el ID). Después busca torneos nuevos una vez por día al abrir la app, o cuando tocás **Actualizar ahora**.
 - El token queda guardado solo en el teléfono y no se incluye en los respaldos.
+- **Scouting de rivales:** en **Cargar**, al escribir el rival aparece **🔎 Scouting de … en start.gg** (también en su nota de jugador). Trae sus últimos 40 sets: personajes, en qué stages gana y pierde, qué stages elige de counterpick, torneos recientes y tu récord contra él. Lo busca entre tus rivales y entre los inscriptos de tus últimos torneos; si no aparece, se pega el link de su perfil de start.gg. El informe queda guardado para verlo sin internet y se puede pasar a su nota.
+- Al cargar un game, en **Personaje del rival** se sugieren solo los personajes que ese rival suele usar (de tus games, sus torneos y su scouting). **Buscar…** sigue disponible para cualquier otro.
 
 ---
 
@@ -101,7 +104,8 @@ js/db.js            base de datos local (IndexedDB)
 js/data.js          roster, stages y definición de KPIs
 js/sample.js        generador de datos de ejemplo
 js/stages.js        qué imagen usa cada stage
-js/startgg.js       sincronización con la API de start.gg
+js/startgg.js       sincronización con la API de start.gg y scouting de rivales
+js/drive.js         respaldo en Google Drive (OAuth en el navegador)
 img/stages/         imágenes de los stages (480 px, JPG)
 data/mre.json       guías de matchups y fundamentos de Mr.E
 icons/              íconos de la app
