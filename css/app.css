@@ -177,10 +177,60 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 .sc-set > span { display: flex; flex-direction: column; min-width: 0; }
 .chip.static { cursor: default; min-height: 36px; display: inline-flex; align-items: center; }
 
+/* sets duplicados (cargado a mano y de start.gg) */
+.h2h.twin { display: flex; flex-direction: column; gap: 6px; border: 1px solid rgba(245, 184, 74, .45); }
+.h2h.twin small { color: var(--muted); }
+.dup-pair { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
+.dup-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dup-side { display: flex; flex-direction: column; gap: 3px; padding: 10px; border-radius: 12px; background: var(--surface2); min-width: 0; }
+.dup-side small { overflow-wrap: anywhere; }
+
 .setbar {
   background: rgba(77, 163, 255, .12); border: 1px solid rgba(77, 163, 255, .35);
   border-radius: 12px; padding: 10px 14px; font-size: .95rem;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px;
 }
+.setbar-actions { display: flex; gap: 12px; margin-left: auto; }
+.setbar-actions .link { min-height: 40px; }
+.chips.bo { gap: 6px; }
+.chips.bo .chip { min-height: 40px; }
+.chip.on:disabled { opacity: 1; cursor: default; }
+
+/* resultado: Gané/Perdí y al lado los stocks */
+.res-line { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.res-pick { display: flex; flex-direction: column; gap: 8px; flex: 0 0 104px; }
+.res-wl {
+  min-height: 52px; border-radius: 14px; font-size: 1.05rem; font-weight: 800; cursor: pointer;
+  background: var(--surface2); border: 2px solid var(--border);
+}
+.res-wl.win { color: var(--win); }
+.res-wl.loss { color: var(--loss); }
+.res-wl.win.on { background: var(--win); border-color: var(--win); color: #062016; }
+.res-wl.loss.on { background: var(--loss); border-color: var(--loss); color: #2a0606; }
+.res-stocks { flex: 1 1 180px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.res-hint { font-size: .82rem; color: var(--muted); }
+.res-hint b { color: var(--text); }
+.res-grid { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 8px; }
+.res-btn {
+  min-height: 112px; border-radius: 14px; font-size: 1.6rem; font-weight: 800; cursor: pointer;
+  background: var(--surface2); border: 2px solid var(--border);
+}
+.res-btn:disabled { opacity: .35; cursor: default; }
+.res-btn.win.on { background: var(--win); border-color: var(--win); color: #062016; }
+.res-btn.loss.on { background: var(--loss); border-color: var(--loss); color: #2a0606; }
+.res-wl:active, .res-btn:not(:disabled):active { transform: scale(.96); }
+/* casual con 4 o 5 stocks, o pantallas muy angostas: los stocks pasan abajo y más bajos */
+@media (max-width: 359px) {
+  .res-pick { flex-direction: row; flex: 1 1 100%; }
+  .res-pick .res-wl { flex: 1; }
+  .res-btn { min-height: 56px; }
+}
+
+.mini-alert {
+  display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; font-size: .88rem;
+  border: 1px solid var(--warn); border-radius: 12px; background: rgba(245, 184, 74, .08);
+}
+.mini-alert > span { flex: 1; min-width: 0; }
 
 .result-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .res {
@@ -312,6 +362,8 @@ details.vod[open] > summary::after { content: "▴"; }
 
 .h2h { font-size: .9rem; padding: 10px 12px; border-radius: 12px; background: var(--surface2); }
 .h2h:empty { display: none; }
+#muHint { display: flex; flex-direction: column; gap: 10px; }
+#muHint:empty { display: none; }
 #rivalH2H { display: flex; flex-direction: column; gap: 8px; }
 #rivalH2H:empty { display: none; }
 
@@ -438,13 +490,21 @@ details.vod[open] > summary::after { content: "▴"; }
 .pick.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .code { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: .75rem; overflow-x: auto; max-height: 40vh; margin: 0; }
 
+/* arriba, debajo del título: así no tapa el botón de guardar */
 .toast {
-  position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar-h) + var(--safe-b) + 84px); z-index: 30;
+  position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 56px); z-index: 30;
+  max-width: 608px; margin: 0 auto;
   background: #2a3042; color: var(--text); border-radius: 12px; padding: 12px 16px; text-align: center; font-weight: 600;
   box-shadow: 0 6px 24px rgba(0, 0, 0, .4);
-  opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .2s, transform .2s;
+  opacity: 0; transform: translateY(-10px); pointer-events: none; transition: opacity .2s, transform .2s;
 }
 .toast.show { opacity: 1; transform: none; }
+.toast.has-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; padding: 6px 6px 6px 16px; }
+.toast.show.has-action { pointer-events: auto; }
+.toast-btn {
+  flex: none; min-height: 44px; padding: 0 14px; border-radius: 10px; border: 0; cursor: pointer;
+  background: rgba(255, 255, 255, .14); color: var(--text); font-weight: 800;
+}
 .toast.ok { background: #14432f; }
 .toast.err { background: #5a1d1d; }
 
