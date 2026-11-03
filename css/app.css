@@ -75,6 +75,9 @@ p { margin: 0; }
 .inp:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
 textarea.inp { resize: vertical; margin-top: 8px; }
 .inp.date { width: auto; min-height: 48px; padding: 6px 10px; font-size: .9rem; }
+.date-pick { position: relative; display: flex; align-items: center; cursor: pointer; }
+.row-between .date-pick { width: auto; font-size: .95rem; }
+.date-pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 select.inp { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%; background-size: 6px 6px; background-repeat: no-repeat; padding-right: 30px; }
 
