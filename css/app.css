@@ -26,6 +26,7 @@ body {
   font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + 16px);
   overscroll-behavior-y: contain;
+  overflow-x: clip; /* si algo no entra, que no agrande toda la página */
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2 { margin: 0; }
@@ -75,7 +76,7 @@ p { margin: 0; }
 .inp:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
 textarea.inp { resize: vertical; margin-top: 8px; }
 .inp.date { width: auto; min-height: 48px; padding: 6px 10px; font-size: .9rem; }
-.date-pick { position: relative; display: flex; align-items: center; cursor: pointer; }
+.date-pick { position: relative; display: flex; align-items: center; cursor: pointer; white-space: nowrap; }
 .row-between .date-pick { width: auto; font-size: .95rem; }
 .date-pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 select.inp { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
@@ -148,6 +149,34 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 .chip.banned { text-decoration: line-through; color: var(--muted); opacity: .7; }
 .chip.dim { opacity: .45; }
 
+/* sugerencia de baneos y picks */
+.st-rec {
+  position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 8px;
+  font-style: normal; font-size: .72rem; font-weight: 800; background: rgba(15, 17, 23, .85); color: var(--text);
+}
+.st-rec.good { color: var(--win); }
+.st-rec.bad { color: var(--loss); }
+.stage.sug.ban, .chip.sug.ban { border-color: var(--loss); border-style: dashed; }
+.stage.sug.pick, .chip.sug.pick { border-color: var(--win); }
+.sug-box { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface2); border: 1px solid var(--border); }
+.sug-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sug-row span { font-weight: 700; }
+.sug-row small { color: var(--muted); text-align: right; }
+
+/* scouting de rivales */
+.lbl-note { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.sc-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: .92rem; padding: 3px 0; }
+.sc-row > span { min-width: 0; }
+.sc-row > small { white-space: nowrap; color: var(--muted); }
+.sc-row.good > span { color: var(--win); }
+.sc-row.bad > span { color: var(--loss); }
+.sc-set { display: flex; gap: 10px; align-items: baseline; font-size: .9rem; padding: 4px 0; border-top: 1px solid var(--border); }
+.sc-set > b { flex: none; min-width: 52px; }
+.sc-set.w > b { color: var(--win); }
+.sc-set.l > b { color: var(--loss); }
+.sc-set > span { display: flex; flex-direction: column; min-width: 0; }
+.chip.static { cursor: default; min-height: 36px; display: inline-flex; align-items: center; }
+
 .setbar {
   background: rgba(77, 163, 255, .12); border: 1px solid rgba(77, 163, 255, .35);
   border-radius: 12px; padding: 10px 14px; font-size: .95rem;
@@ -162,20 +191,28 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 .res.loss.on { background: var(--loss); border-color: var(--loss); color: #2a0606; }
 
 .counters { display: grid; gap: 10px; }
-.counters.two { grid-template-columns: 1fr 1fr; }
-.counters.three { grid-template-columns: 1fr 1fr 1fr; }
+.counters.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.counters.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .counter { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .c-label { font-size: .85rem; color: var(--muted); text-align: center; }
 .counters.one .c-label { text-align: left; font-size: .95rem; color: var(--text); }
 .c-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface2); border-radius: 14px; border: 1px solid var(--border); }
 .c-btn {
-  width: 56px; height: 56px; flex: none; border: 0; background: transparent;
+  width: 56px; height: 56px; flex: 0 1 auto; min-width: 40px; border: 0; background: transparent;
   font-size: 1.8rem; font-weight: 700; line-height: 1; color: var(--accent); cursor: pointer; border-radius: 14px;
 }
 .c-btn:active { background: rgba(77, 163, 255, .18); }
 .c-row output { font-size: 1.5rem; font-weight: 800; min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
 .counters.three .c-btn { width: 44px; }
 .counters.three .c-row output { font-size: 1.25rem; }
+/* teléfonos angostos: los tres contadores no entran en una fila, van uno debajo del otro */
+@media (max-width: 400px) {
+  .counters.three { grid-template-columns: 1fr; gap: 8px; }
+  .counters.three .counter { flex-direction: row; align-items: center; justify-content: space-between; }
+  .counters.three .c-label { text-align: left; font-size: .95rem; color: var(--text); }
+  .counters.three .c-row { flex: 0 1 168px; }
+  .counters.three .c-btn { width: 56px; }
+}
 .card.limit { border-color: rgba(181, 144, 255, .45); }
 .card.limit .lbl, .card.limit .c-btn { color: var(--limit); }
 
@@ -221,6 +258,11 @@ details.vod[open] > summary::after { content: "▴"; }
 .seg { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 4px; gap: 2px; }
 .seg-btn { flex: 1 1 0; min-width: 0; min-height: 48px; padding: 4px 2px; border: 0; background: transparent; border-radius: 10px; font-weight: 700; font-size: .82rem; line-height: 1.15; color: var(--muted); cursor: pointer; }
 .seg-btn.on { background: var(--surface2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+/* pantallas muy angostas: las pestañas pasan a dos filas en vez de cortar las palabras */
+@media (max-width: 359px) {
+  .seg { flex-wrap: wrap; }
+  .seg-btn { flex: 1 1 30%; }
+}
 
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
