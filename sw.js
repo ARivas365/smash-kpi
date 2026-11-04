@@ -1,7 +1,7 @@
 // Service worker: guarda la app en caché para que funcione sin internet.
 // Estrategia: responde desde la caché al instante y actualiza en segundo plano.
 // al publicar cambios, subir este número y APP_VERSION en js/app.js (se muestra en Ajustes)
-const CACHE = 'smash-kpi-v20';
+const CACHE = 'smash-kpi-v21';
 const ASSETS = [
   './',
   './index.html',
@@ -16,6 +16,14 @@ const ASSETS = [
   './js/startgg.js',
   './js/drive.js',
   './manifest.json',
+  './manifest-smash.json',
+  './manifest-limpio.json',
+  './icons/smash-192.png',
+  './icons/smash-512.png',
+  './icons/smash-maskable-512.png',
+  './icons/limpio-192.png',
+  './icons/limpio-512.png',
+  './icons/limpio-maskable-512.png',
   './data/mre.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
