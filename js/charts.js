@@ -48,7 +48,7 @@ export function lineChart({ points, fmt, min, max, ref, labelAll = false }) {
     const tip = `Semana ${p.label}: ${fmt(p.value)} (${p.n} game${p.n === 1 ? '' : 's'})`;
     s += `<circle cx="${cx}" cy="${cy}" r="4.5" class="${p.n < 5 ? 'pt low' : 'pt'}"/>`;
     if (labelAll || i === lastIdx) {
-      s += `<text x="${cx}" y="${cy - 9}" class="val" text-anchor="middle">${fmt(p.value)}</text>`;
+      s += `<text x="${cx}" y="${cy - 12}" class="val" text-anchor="middle">${fmt(p.value)}</text>`;
     }
     s += `<circle cx="${cx}" cy="${cy}" r="16" class="hit" data-tip="${tip}"/>`;
   });

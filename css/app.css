@@ -15,7 +15,7 @@
   --tabbar-h: 64px;
   --safe-b: env(safe-area-inset-bottom, 0px);
   color-scheme: dark;
-  /* lo que cambia cada tema (Ajustes → Tema); abajo de todo están Smash y Limpio */
+  /* lo que cambia cada tema (Ajustes → Tema); abajo de todo están Smash y Planilla */
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --font-display: var(--font);
   --r-btn: 12px;
@@ -33,6 +33,7 @@
   --toast-ok: #14432f;
   --toast-err: #5a1d1d;
   --stage-bg: #323748;
+  --theme-color: #0f1117; /* barra del teléfono */
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -73,8 +74,18 @@ code { background: var(--surface2); padding: 1px 5px; border-radius: 4px; }
   display: flex; flex-direction: column; gap: 10px;
 }
 .card.alert { border-color: var(--warn); }
-.lbl { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.lbl.sub { text-transform: none; letter-spacing: 0; font-size: .85rem; margin-top: 4px; }
+/* títulos de cada bloque: grandes, en el color del texto y en negrita, para que nunca se confundan
+   con las opciones (que van dentro de su botón) ni con las aclaraciones (.lbl.sub, chicas y grises) */
+.lbl { font-size: 1.02rem; font-weight: 800; line-height: 1.25; letter-spacing: -.005em; color: var(--text); }
+.lbl.sub { font-size: .86rem; font-weight: 600; letter-spacing: 0; color: var(--muted); margin-top: 2px; }
+/* más aire arriba de un título que abajo: cada grupo se separa del anterior */
+.card > .lbl:not(:first-child), .card > .row-between:not(:first-child) > .lbl:first-child { margin-top: 8px; }
+#oppCharBox > .lbl:first-child { display: block; margin: 8px 0 10px; }
+/* nombre de cada bloque (Partida, Personajes, Stage, Resultado…): un escalón arriba de los títulos de campo */
+.blk, .card > .lbl:first-child, .card > .row-between:first-child > .lbl:first-child {
+  margin: 0; font-size: 1.22rem; font-weight: 900; line-height: 1.2; letter-spacing: -.01em; color: var(--text);
+}
+.card > .lbl.sub:not(:first-child) { margin-top: 2px; }
 .muted { color: var(--muted); }
 .small { font-size: .85rem; }
 .center { text-align: center; }
@@ -96,7 +107,9 @@ p { margin: 0; }
 .inp:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
 textarea.inp { resize: vertical; margin-top: 8px; }
 .inp.date { width: auto; min-height: 48px; padding: 6px 10px; font-size: .9rem; }
-.date-pick { position: relative; display: flex; align-items: center; cursor: pointer; white-space: nowrap; }
+.date-pick { position: relative; display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+/* íconos dibujados (mismo trazo que la barra de abajo) */
+.ic { width: 1.1em; height: 1.1em; flex: none; vertical-align: -.2em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .row-between .date-pick { width: auto; font-size: .95rem; }
 .date-pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 select.inp { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
@@ -310,8 +323,11 @@ details.vod > summary {
   list-style: none; position: relative; padding-right: 28px;
 }
 details.vod > summary::-webkit-details-marker { display: none; }
-details.vod > summary::after { content: "▾"; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 1.1rem; }
-details.vod[open] > summary::after { content: "▴"; }
+details.vod > summary::after {
+  content: ""; position: absolute; right: 8px; top: 50%; width: 9px; height: 9px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-75%) rotate(45deg);
+}
+details.vod[open] > summary::after { transform: translateY(-25%) rotate(-135deg); }
 .vod-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
 .vod-badge { font-size: .75rem; font-weight: 700; color: var(--warn); background: rgba(245, 184, 74, .12); border-radius: 6px; padding: 2px 6px; }
 
@@ -321,6 +337,11 @@ details.vod[open] > summary::after { content: "▴"; }
   padding: 8px; margin: 0 -4px;
   background: var(--savebar-bg); border-radius: 16px;
   backdrop-filter: blur(6px);
+}
+/* tapa también el espacio entre Guardar y la barra de abajo: que no se vea contenido pasando por ahí */
+.savebar::after {
+  content: ""; position: absolute; left: 0; right: 0; top: calc(100% - 16px); height: 26px; z-index: -1;
+  background: var(--savebar-bg); backdrop-filter: blur(6px);
 }
 
 .done { align-items: center; text-align: center; padding: 24px 16px; }
@@ -372,7 +393,8 @@ details.vod[open] > summary::after { content: "▴"; }
 .chart .grid { stroke: var(--border); stroke-width: 1; }
 .chart .ref { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; opacity: .7; }
 .chart .axis { fill: var(--muted); font-size: 10.5px; }
-.chart .val { fill: var(--text); font-size: 11px; font-weight: 700; }
+/* el número lleva un borde del color de la tarjeta: se lee aunque la línea pase por debajo */
+.chart .val { fill: var(--text); font-size: 11px; font-weight: 700; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
 .chart .line { fill: none; stroke: var(--accent); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; }
 .chart .pt { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
 .chart .pt.low { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
@@ -491,8 +513,10 @@ details.vod[open] > summary::after { content: "▴"; }
 .game.w .g-res { color: var(--win); }
 .game.l .g-res { color: var(--loss); }
 .g-info { font-size: .88rem; color: var(--muted); }
-.g-actions { display: flex; gap: 8px; }
+/* Editar es la acción de cada game; Borrar queda chica y apartada, para no tocarla por error */
+.g-actions { display: flex; gap: 24px; }
 .g-actions .btn { flex: 1; }
+.g-actions .btn.danger { flex: 0 0 auto; min-width: 96px; }
 
 /* ---------- barra inferior ---------- */
 .tabbar {
@@ -578,7 +602,7 @@ details.vod[open] > summary::after { content: "▴"; }
   --topbar-bg: rgba(20, 15, 14, .95); --tabbar-bg: #1a1412; --savebar-bg: rgba(20, 15, 14, .92);
   --toast-bg: #2a211e; --toast-ok: #12402a; --toast-err: #5a1a1a; --stage-bg: #2a211e;
   --font-display: Roboto, "Segoe UI", system-ui, sans-serif;
-  --smash-red: #e8382f;
+  --smash-red: #e8382f; --theme-color: #140f0e;
   --slant: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
 }
 [data-theme="smash"] .topbar { border-bottom: 0; }
@@ -587,10 +611,16 @@ details.vod[open] > summary::after { content: "▴"; }
   background: var(--smash-red); clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
 }
 [data-theme="smash"] .topbar h1 { font: italic 900 1.5rem var(--font-display); text-transform: uppercase; letter-spacing: -.01em; }
-[data-theme="smash"] .lbl { font-weight: 800; font-size: .78rem; letter-spacing: .06em; }
-[data-theme="smash"] .lbl.sub, [data-theme="smash"] .lbl-note { font-weight: 700; font-size: .85rem; letter-spacing: 0; }
+[data-theme="smash"] .lbl { font-weight: 800; }
+/* nombre de cada bloque: el único título en cursiva gruesa y mayúscula, como el título de arriba */
+[data-theme="smash"] .blk, [data-theme="smash"] .card > .lbl:first-child, [data-theme="smash"] .card > .row-between:first-child > .lbl:first-child {
+  font: italic 900 1.12rem/1.2 var(--font-display); text-transform: uppercase; letter-spacing: .01em;
+}
+[data-theme="smash"] .lbl.sub, [data-theme="smash"] .lbl-note { font-weight: 600; }
 [data-theme="smash"] .card { border-color: transparent; }
-[data-theme="smash"] .chip { border-color: transparent; font-weight: 700; }
+/* opciones más livianas que los títulos: el título manda, la opción se lee dentro de su botón */
+[data-theme="smash"] .chip { border-color: transparent; font-weight: 600; }
+[data-theme="smash"] .chip.on { font-weight: 800; }
 [data-theme="smash"] .chip.ghost { border: 1px dashed var(--border); background: transparent; color: var(--muted); }
 [data-theme="smash"] .btn.primary {
   border: 0; clip-path: var(--slant); border-radius: 0; text-transform: uppercase;
@@ -620,66 +650,148 @@ details.vod[open] > summary::after { content: "▴"; }
 [data-theme="smash"] .stage.sug.pick { box-shadow: 0 0 0 3px var(--win); }
 [data-theme="smash"] .tabbar { border-top: 0; }
 
-/* ---------- tema Limpio: minimalista, redondeado, un solo acento ---------- */
-:root[data-theme="limpio"] {
-  --bg: #0c0c0e; --surface: #151519; --surface2: #1e1e24; --border: #2a2a32;
-  --text: #f4f4f5; --muted: #a1a1aa; --accent: #d4f24a; --accent-ink: #1a2000;
-  --win: #4ade80; --loss: #fb7185; --warn: #fbbf24; --limit: #c4b5fd;
-  --radius: 22px; --r-btn: 30px; --r-chip: 30px;
-  --chip-on: #f4f4f5; --chip-on-ink: #0c0c0e;
-  --accent-soft: rgba(212, 242, 74, .1); --accent-line: rgba(212, 242, 74, .35);
-  --win-ink: #052e16; --loss-ink: #3b0a14;
-  --topbar-bg: rgba(12, 12, 14, .94); --tabbar-bg: #151519; --savebar-bg: rgba(12, 12, 14, .9);
-  --toast-bg: #1e1e24; --toast-ok: #143a22; --toast-err: #4a1622; --stage-bg: #1e1e24;
+/* ---------- tema Planilla: la hoja del bracket pegada en la pared del torneo ----------
+   Tinta negra sobre papel blanco, resaltador amarillo en lo elegido. Máximo contraste con cualquier luz.
+   Cada bloque abre con su título en etiqueta negra; las opciones son cuadros dibujados con fibrón;
+   verde y rojo solo para Gané/Perdí. Color plano: sin degradés, sin brillos, sin desenfoque. */
+:root[data-theme="planilla"] {
+  color-scheme: light;
+  --bg: #e4e6e9; --surface: #ffffff; --surface2: #eef0f2; --border: #c4c8ce;
+  --text: #111214; --muted: #4a4f57; --accent: #111214; --accent-ink: #ffffff;
+  --win: #0b7a42; --loss: #c62828; --warn: #a15c00; --limit: #6a2fc8;
+  --ink: #111214; --hl: #ffe14d; --hl-soft: #fff3b0;
+  --radius: 6px; --r-btn: 6px; --r-chip: 6px;
+  --chip-on: var(--hl); --chip-on-ink: var(--ink);
+  --accent-soft: var(--hl-soft); --accent-line: var(--ink);
+  --win-ink: #ffffff; --loss-ink: #ffffff;
+  --topbar-bg: var(--ink); --tabbar-bg: #ffffff; --savebar-bg: #e4e6e9;
+  --toast-bg: var(--ink); --toast-ok: #0b5d33; --toast-err: #a11d1d; --stage-bg: #d5d8dc;
+  --theme-color: #111214;
 }
-:root[data-theme="limpio"] body { padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + 40px); }
-[data-theme="limpio"] .topbar { border-bottom: 0; padding-top: calc(env(safe-area-inset-top, 0px) + 16px); }
-[data-theme="limpio"] .topbar h1 { font-size: 1.65rem; font-weight: 800; letter-spacing: -.02em; }
-[data-theme="limpio"] .card { border-color: transparent; padding: 16px; }
-[data-theme="limpio"] .card.alert { border-color: var(--warn); }
-/* títulos de sección en blanco; las etiquetas de cada campo, en gris y más chicas */
-[data-theme="limpio"] .lbl { text-transform: none; letter-spacing: 0; font-size: .95rem; font-weight: 700; color: var(--text); }
-[data-theme="limpio"] .lbl.sub, [data-theme="limpio"] .lbl-note { font-size: .85rem; font-weight: 600; color: var(--muted); }
-[data-theme="limpio"] .chip { border: 0; }
-[data-theme="limpio"] .chip.ghost { box-shadow: inset 0 0 0 1px var(--border); }
-[data-theme="limpio"] .btn { border-color: transparent; }
-[data-theme="limpio"] .btn.ghost { border-color: var(--border); }
-/* Borrar no tiene que verse más que Editar */
-[data-theme="limpio"] .btn.danger { border-color: transparent; background: color-mix(in srgb, var(--loss) 12%, transparent); }
-[data-theme="limpio"] .game .btn:not(.danger) { background: var(--surface); }
-[data-theme="limpio"] .tile { border-color: transparent; }
-[data-theme="limpio"] .seg:has(> .seg-btn:nth-child(5)) { gap: 4px; }
-/* el lima (acción) no se confunde con el verde de las victorias en los gráficos */
-[data-theme="limpio"] .chart .line { stroke: var(--text); }
-[data-theme="limpio"] .chart .pt { fill: var(--text); }
-[data-theme="limpio"] .chart .pt.low { stroke: var(--text); }
-[data-theme="limpio"] .pat-bar i { background: var(--text); }
-[data-theme="limpio"] .btn.primary { font-weight: 800; }
-[data-theme="limpio"] .inp { border-color: transparent; border-radius: 16px; }
-[data-theme="limpio"] .setbar { border: 0; border-radius: 18px; }
-[data-theme="limpio"] .seg { border: 0; border-radius: 30px; }
-[data-theme="limpio"] .seg-btn { border-radius: 30px; }
-[data-theme="limpio"] .seg-btn.on { background: var(--text); color: var(--bg); box-shadow: none; }
-[data-theme="limpio"] .res-wl, [data-theme="limpio"] .res-btn { border: 0; border-radius: 22px; }
-[data-theme="limpio"] .res-wl { font-weight: 800; }
-[data-theme="limpio"] .stage { border-color: transparent; background: transparent; border-radius: 16px; }
-[data-theme="limpio"] .stage img, [data-theme="limpio"] .stage svg { border-radius: 14px; }
-[data-theme="limpio"] .stage.on { border-color: var(--accent); }
-[data-theme="limpio"] .tag { border-radius: 20px; padding: 1px 8px; }
-[data-theme="limpio"] .game { border-radius: 16px; }
-[data-theme="limpio"] .c-row { border: 0; border-radius: 22px; }
-[data-theme="limpio"] .sheet-panel { border-top: 0; border-radius: 26px 26px 0 0; }
-[data-theme="limpio"] .sheet-panel.full { border-radius: 0; }
-/* barra de abajo flotante */
-[data-theme="limpio"] .tabbar {
-  left: 12px; right: 12px; bottom: calc(8px + var(--safe-b)); height: var(--tabbar-h); padding-bottom: 0;
-  border: 0; border-radius: 22px; box-shadow: 0 8px 30px rgba(0, 0, 0, .5); max-width: 640px; margin: 0 auto;
+/* barra de arriba: la cabecera negra de la planilla */
+[data-theme="planilla"] .topbar { border-bottom: 0; color: #fff; backdrop-filter: none; }
+[data-theme="planilla"] .topbar h1 { font-size: 1.3rem; font-weight: 900; letter-spacing: -.01em; }
+[data-theme="planilla"] .app-logo { box-shadow: 0 0 0 2px #fff; border-radius: 6px; }
+/* hojas blancas sobre la pared */
+[data-theme="planilla"] .card { border-color: var(--border); }
+[data-theme="planilla"] .card.alert { border: 2px solid var(--warn); }
+/* el nombre de cada hoja (Partida, Personajes, Stage, Resultado…) va en etiqueta negra;
+   las preguntas de adentro (Rival, Mi personaje…), en tinta y negrita, un escalón abajo */
+[data-theme="planilla"] .blk,
+[data-theme="planilla"] .card > .lbl:first-child,
+[data-theme="planilla"] .card > .row-between:first-child > .lbl:first-child {
+  align-self: flex-start; background: var(--ink); color: #fff; padding: 3px 11px 5px; border-radius: 4px;
+  font-size: 1.08rem; font-weight: 900; white-space: nowrap;
 }
-[data-theme="limpio"] .tabbar button.active { color: var(--accent); }
-/* más aire entre Guardar y la barra de abajo, para no tocar una pestaña por error */
-[data-theme="limpio"] .savebar { bottom: calc(var(--tabbar-h) + var(--safe-b) + 28px); border-radius: 30px; }
+[data-theme="planilla"] summary .blk { align-self: flex-start; }
+[data-theme="planilla"] .card.limit .blk { background: var(--limit); }
+[data-theme="planilla"] .lbl { font-weight: 800; }
+[data-theme="planilla"] .lbl.sub, [data-theme="planilla"] .lbl-note { color: var(--muted); }
+/* opciones: cuadros con fibrón; la elegida, resaltada */
+[data-theme="planilla"] .chip { background: #fff; border: 2px solid var(--ink); }
+[data-theme="planilla"] .chip.on { background: var(--hl); border-color: var(--ink); font-weight: 800; }
+[data-theme="planilla"] .chip.ghost { border-style: dashed; border-color: var(--muted); color: var(--muted); background: transparent; }
+[data-theme="planilla"] .chip.dim, [data-theme="planilla"] .chip.banned { opacity: .55; }
+/* firma: G1, G2, G3 unidos con una línea, como los cuadros de un bracket */
+[data-theme="planilla"] .chips.nums:has(> [data-f="gameNum"]) { gap: 14px; }
+[data-theme="planilla"] .chips.nums .chip { position: relative; font-weight: 800; }
+[data-theme="planilla"] .chips.nums:has(> [data-f="gameNum"]) > .chip + .chip::before {
+  content: ""; position: absolute; left: -16px; top: 50%; width: 14px; height: 2px; margin-top: -1px; background: var(--ink);
+}
+/* botones */
+[data-theme="planilla"] .btn { background: #fff; border: 2px solid var(--ink); font-weight: 700; }
+[data-theme="planilla"] .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 900; }
+[data-theme="planilla"] .btn.ghost { background: transparent; border-color: var(--border); }
+/* borrar: rojo, sin relleno, y nunca más fuerte que la acción de al lado */
+[data-theme="planilla"] .btn.danger { border-color: var(--loss); color: var(--loss); }
+[data-theme="planilla"] .link { color: var(--ink); font-weight: 700; text-underline-offset: 3px; }
+[data-theme="planilla"] .inp { background: #fff; border: 2px solid #8a9099; border-radius: 6px; }
+[data-theme="planilla"] .inp:focus { outline: 0; border-color: var(--ink); box-shadow: 0 0 0 3px var(--hl); }
+[data-theme="planilla"] select.inp { background-color: #fff; }
+/* resultado: Gané/Perdí y stocks como casilleros */
+[data-theme="planilla"] .res-wl, [data-theme="planilla"] .res-btn, [data-theme="planilla"] .res { background: #fff; border: 2px solid var(--ink); border-radius: 6px; }
+[data-theme="planilla"] .res-wl { font-weight: 900; }
+[data-theme="planilla"] .res-btn { color: var(--ink); }
+[data-theme="planilla"] .res-btn.win.on, [data-theme="planilla"] .res-wl.win.on, [data-theme="planilla"] .res.win.on { border-color: var(--win); }
+[data-theme="planilla"] .res-btn.loss.on, [data-theme="planilla"] .res-wl.loss.on, [data-theme="planilla"] .res.loss.on { border-color: var(--loss); }
+/* set en curso: una línea de la planilla, resaltada */
+[data-theme="planilla"] .setbar { background: var(--hl-soft); border: 2px solid var(--ink); border-radius: 6px; }
+/* stages: la foto con el nombre abajo; el elegido, enmarcado y resaltado */
+[data-theme="planilla"] .stage { background: #fff; border: 2px solid var(--ink); border-radius: 6px; }
+[data-theme="planilla"] .stage.on { box-shadow: 0 0 0 3px var(--hl); }
+[data-theme="planilla"] .stage.on span { background: var(--hl); color: var(--ink); }
+[data-theme="planilla"] .stage.on::after { background: var(--ink); color: #fff; }
+[data-theme="planilla"] .stage.sug.ban { border-color: var(--loss); }
+[data-theme="planilla"] .stage.sug.pick { border-color: var(--win); border-width: 3px; }
+[data-theme="planilla"] .st-rec { background: #fff; color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+[data-theme="planilla"] .st-rec.good { color: var(--win); }
+[data-theme="planilla"] .st-rec.bad { color: var(--loss); }
+/* contadores */
+[data-theme="planilla"] .c-row { background: #fff; border: 2px solid var(--ink); border-radius: 6px; }
+[data-theme="planilla"] .c-btn { border-radius: 4px; }
+[data-theme="planilla"] .card.limit { border-color: var(--limit); }
+/* pestañas de filtro (Historial, Estadísticas): casilleros unidos, el elegido en negro */
+[data-theme="planilla"] .seg { background: #fff; border: 2px solid var(--ink); border-radius: 6px; padding: 0; gap: 0; overflow: hidden; }
+[data-theme="planilla"] .seg-btn { border-radius: 0; color: var(--ink); font-weight: 700; }
+[data-theme="planilla"] .seg-btn + .seg-btn { box-shadow: inset 2px 0 0 var(--ink); }
+[data-theme="planilla"] .seg-btn.on { background: var(--ink); color: #fff; box-shadow: none; }
+[data-theme="planilla"] .seg-badge { background: var(--hl); color: var(--ink); }
+/* números: tinta, en columnas fijas */
+[data-theme="planilla"] .tile { border-color: var(--border); }
+[data-theme="planilla"] .t-val, [data-theme="planilla"] .big-num { font-weight: 900; }
+[data-theme="planilla"] .tag { background: #fff; box-shadow: inset 0 0 0 1px var(--ink); border-radius: 4px; font-weight: 700; }
+[data-theme="planilla"] .lowchip, [data-theme="planilla"] .vod-badge { background: var(--hl-soft); color: var(--ink); }
+[data-theme="planilla"] .chart .line { stroke: var(--ink); stroke-width: 2.5; }
+[data-theme="planilla"] .chart .pt { fill: var(--ink); stroke: #fff; }
+[data-theme="planilla"] .chart .pt.low { fill: #fff; stroke: var(--ink); }
+[data-theme="planilla"] .pat-bar { background: var(--surface2); box-shadow: inset 0 0 0 1px var(--border); border-radius: 2px; }
+[data-theme="planilla"] .pat-bar i { background: var(--ink); border-radius: 0; }
+[data-theme="planilla"] .pat-row.bad .pat-bar i { background: var(--loss); }
+[data-theme="planilla"] .m { background: #fff; box-shadow: inset 0 0 0 1px var(--border); border-radius: 4px; }
+[data-theme="planilla"] .h2h, [data-theme="planilla"] .sug-box, [data-theme="planilla"] .dup-side { background: var(--surface2); border-radius: 6px; }
+[data-theme="planilla"] .mre-hint { border-width: 2px; border-radius: 6px; }
+[data-theme="planilla"] .mre-text h3 { color: var(--ink); }
+/* historial: cada set es un cuadro del bracket; el puntaje va en su casillero */
+html:root[data-theme="planilla"] .card.set .score { min-width: 54px; text-align: center; border-radius: 4px; background: #fff; box-shadow: inset 0 0 0 2px var(--ink); }
+html:root[data-theme="planilla"] .card.set.won .score { background: var(--win); color: #fff; box-shadow: none; }
+html:root[data-theme="planilla"] .card.set.lost .score { background: #fff; color: var(--loss); box-shadow: inset 0 0 0 2px var(--loss); }
+html:root[data-theme="planilla"] .card.set.won .score *, html:root[data-theme="planilla"] .card.set.lost .score * { color: inherit; }
+[data-theme="planilla"] .game { background: var(--surface2); border-radius: 6px; }
+[data-theme="planilla"] .g-actions { gap: 16px; }
+[data-theme="planilla"] .note-card, [data-theme="planilla"] .note-game { border-radius: 6px; }
+/* barra de abajo: pegada al borde, la pestaña activa subrayada con resaltador */
+[data-theme="planilla"] .tabbar { border-top: 2px solid var(--ink); }
+[data-theme="planilla"] .tabbar button { color: var(--muted); }
+[data-theme="planilla"] .tabbar button.active { color: var(--ink); font-weight: 900; box-shadow: inset 0 -5px 0 var(--hl); }
+[data-theme="planilla"] .savebar, [data-theme="planilla"] .savebar::after { backdrop-filter: none; }
+[data-theme="planilla"] .savebar { border-radius: 8px; }
+/* hojas que suben desde abajo y avisos */
+[data-theme="planilla"] .sheet-panel { border-radius: 8px 8px 0 0; border-top: 2px solid var(--ink); }
+[data-theme="planilla"] .sheet-panel.full { border-radius: 0; border-top: 0; }
+[data-theme="planilla"] .sheet-head { border-bottom: 2px solid var(--ink); }
+[data-theme="planilla"] .pick { background: #fff; border: 2px solid var(--ink); border-radius: 6px; }
+[data-theme="planilla"] .toast { color: #fff; border-radius: 6px; box-shadow: 0 6px 20px rgba(17, 18, 20, .3); }
+[data-theme="planilla"] .update-bar { background: var(--hl-soft); border: 2px solid var(--ink); border-radius: 6px; }
+[data-theme="planilla"] .mini-alert { background: #fff; border-width: 2px; border-radius: 6px; }
+[data-theme="planilla"] .theme-opt { background: #fff; border-color: var(--border); }
+[data-theme="planilla"] .theme-opt.on { border-color: var(--ink); background: var(--hl-soft); }
+[data-theme="planilla"] .theme-sw i { box-shadow: 0 0 0 2px #fff, 0 0 0 3px var(--border); }
+[data-theme="planilla"] .code { background: var(--surface2); }
+/* lo que el navegador dibuja solo: selección con resaltador, foco con tinta */
+:root[data-theme="planilla"] ::selection { background: var(--hl); color: var(--ink); }
+[data-theme="planilla"] :is(.chip, .btn, .seg-btn, .stage, .res-wl, .res-btn, .tabbar button, .link, summary, .pick, .theme-opt):focus-visible {
+  outline: 2px solid var(--ink); outline-offset: 2px; box-shadow: 0 0 0 5px var(--hl);
+}
+/* historial: los games del set son renglones de la planilla, no cajas dentro de cajas */
+[data-theme="planilla"] .set-body { gap: 0; }
+[data-theme="planilla"] .game { background: transparent; border-radius: 0; padding: 12px 0; border-top: 1px solid var(--border); }
+[data-theme="planilla"] .set-body > .btn { margin-top: 10px; }
+/* estadísticas: los números como una planilla llena, en casilleros con línea y columnas fijas */
+[data-theme="planilla"] .tiles { gap: 0; background: #fff; border: 2px solid var(--ink); border-radius: 6px; overflow: hidden; }
+[data-theme="planilla"] .tile { border: 0; border-radius: 0; box-shadow: inset -1px -1px 0 var(--border); }
+[data-theme="planilla"] .t-label { color: var(--muted); font-weight: 700; }
 
-/* ---------- comunes a Smash y Limpio ---------- */
+/* ---------- comunes a Smash y Planilla ---------- */
 :root[data-theme] .inp::placeholder { color: var(--muted); opacity: 1; }
 :root[data-theme] .inp { caret-color: var(--accent); }
 :root[data-theme] ::selection { background: var(--accent); color: var(--accent-ink); }

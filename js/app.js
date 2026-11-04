@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '23';
+const APP_VERSION = '24';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -65,7 +65,30 @@ const fmtDateLong = s => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y
 const hhmm = ts => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 // se usa el calendario del teléfono, pero la fecha elegida se muestra siempre en día/mes/año
 // (el campo del sistema queda invisible encima del texto)
-const dateField = (attrs, value) => `<label class="inp date-pick"><span>📅 ${value ? fmtDateLong(value) : 'dd/mm/aaaa'}</span>
+// íconos dibujados con el mismo trazo que la barra de abajo (en vez de emojis, que cambian según el teléfono)
+const ICONS = {
+  cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  trophy: '<path d="M8 4h8v6a4 4 0 0 1-8 0zM8 6H4.5v1A3.5 3.5 0 0 0 8 10.5M16 6h3.5v1a3.5 3.5 0 0 1-3.5 3.5M12 14v4M8 21h8M9.5 18h5"/>',
+  vod: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9v6l5-3z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  cloud: '<path d="M7 19h10a4.5 4.5 0 0 0 .6-8.96A6 6 0 0 0 6.1 11 4 4 0 0 0 7 19z"/>',
+  book: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5zM5 19.5A1.5 1.5 0 0 0 6.5 21H19M9 7h6"/>',
+  pencil: '<path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  up: '<path d="M6 15l6-6 6 6"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  venue: '<path d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  note: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/>',
+};
+const ic = name => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+const dateField = (attrs, value) => `<label class="inp date-pick">${ic('cal')}<span>${value ? fmtDateLong(value) : 'dd/mm/aaaa'}</span>
   <input type="date" ${attrs} value="${value || ''}"></label>`;
 // hora en que se guardó el primer game del set (los importados de start.gg no la tienen; si se cargó otro día, tampoco)
 function setStart(games, date) {
@@ -113,11 +136,13 @@ const backupOverdue = () => S.games.length > 0 && (!S.lastBackup || Date.now() -
 const THEMES = [
   ['clasico', 'Clásico', ['#0f1117', '#4da3ff', '#3ccf8e']],
   ['smash', 'Smash', ['#e8382f', '#ffc93c', '#140f0e']],
-  ['limpio', 'Limpio', ['#0c0c0e', '#d4f24a', '#f4f4f5']],
+  ['planilla', 'Planilla', ['#ffffff', '#111214', '#ffe14d']],
 ];
 const THEME_KEY = 'smash-kpi-theme'; // copia en localStorage: index.html lo aplica antes de dibujar, sin parpadeo
 
 function applyTheme() {
+  // Planilla reemplazó al tema Limpio: quien lo tenía elegido pasa al nuevo
+  if (S.settings.theme === 'limpio') { S.settings.theme = 'planilla'; db.put('meta', S.settings, 'settings'); }
   const t = THEMES.some(([v]) => v === S.settings.theme) ? S.settings.theme : 'clasico';
   if (t === 'clasico') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = t;
@@ -128,8 +153,10 @@ function applyTheme() {
   document.querySelector('link[rel="apple-touch-icon"]')?.setAttribute('href', icon);
   document.querySelector('link[rel="manifest"]')?.setAttribute('href', t === 'clasico' ? 'manifest.json' : `manifest-${t}.json`);
   try { localStorage.setItem(THEME_KEY, t === 'clasico' ? '' : t); } catch {}
-  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
-  if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
+  // la barra del teléfono toma el color de la barra de arriba de la app
+  const bar = getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim();
+  if (bar) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bar);
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', t === 'planilla' ? 'light' : 'dark');
 }
 
 const themePickerHTML = () => `<div class="theme-grid">${THEMES.map(([v, label, colors]) => `
@@ -346,7 +373,7 @@ function rivalH2H() {
   if (!sets.length) return '';
   const w = sets.filter(s => s.won).length;
   const chars = [...new Set(sets.map(s => s.oppChar).filter(Boolean))].slice(0, 3).join(', ');
-  return `<div class="h2h">🏆 En torneos vs <b>${esc(sets[0].opp)}</b>: <b class="${w * 2 >= sets.length ? 'win' : 'loss'}">${w}-${sets.length - w}</b> en sets${chars ? ` · usa ${esc(chars)}` : ''}</div>`;
+  return `<div class="h2h">${ic('trophy')} En torneos vs <b>${esc(sets[0].opp)}</b>: <b class="${w * 2 >= sets.length ? 'win' : 'loss'}">${w}-${sets.length - w}</b> en sets${chars ? ` · usa ${esc(chars)}` : ''}</div>`;
 }
 
 // ---------- ayuda de baneos (torneo) ----------
@@ -416,11 +443,11 @@ function banHeaderHTML(plan, f) {
     html += `<div class="ban-ctx">${plan.steve === 'me' ? 'Usás Steve' : `${whoName('opp', f)} usa Steve`}: no hay baneos y elige el stage el que no usa Steve.</div>`;
   }
   if (step.act === 'ban') {
-    html += `<div class="ban-step ${step.who}">🚫 <b>${whoName(step.who, f)}</b> ${VERB.ban[step.who]} ${step.left} stage${step.left === 1 ? '' : 's'}</div>`;
+    html += `<div class="ban-step ${step.who}">${ic('ban')} <b>${whoName(step.who, f)}</b> ${VERB.ban[step.who]} ${step.left} stage${step.left === 1 ? '' : 's'}</div>`;
   } else if (step.done) {
-    html += `<div class="ban-step done">✅ <b>${esc(f.stage)}</b> · lo ${VERB.picked[step.who]} ${step.who === 'me' ? 'vos' : whoName('opp', f)}</div>`;
+    html += `<div class="ban-step done">${ic('check')} <b>${esc(f.stage)}</b> · lo ${VERB.picked[step.who]} ${step.who === 'me' ? 'vos' : whoName('opp', f)}</div>`;
   } else {
-    html += `<div class="ban-step ${step.who}">👉 <b>${whoName(step.who, f)}</b> ${VERB.pick[step.who]} el stage</div>`;
+    html += `<div class="ban-step ${step.who}">${ic('arrow')} <b>${whoName(step.who, f)}</b> ${VERB.pick[step.who]} el stage</div>`;
   }
   return html;
 }
@@ -446,7 +473,7 @@ function stageRecords(f) {
   return rec;
 }
 
-const recText = (r, f) => (r.n ? `${r.w}-${r.n - r.w} vs ${esc(f.oppChar)}${r.n < MIN_N ? ' ⚠' : ''}` : `sin games vs ${esc(f.oppChar)} · general ${Math.round(r.aw / r.an * 100)}%`);
+const recText = (r, f) => (r.n ? `${r.w}-${r.n - r.w} vs ${esc(f.oppChar)}${r.n < MIN_N ? '*' : ''}` : `sin games vs ${esc(f.oppChar)} · general ${Math.round(r.aw / r.an * 100)}%`);
 
 // Stages que conviene banear (los peores) o elegir (el mejor) en este paso.
 function suggestion(plan, step, f, recs) {
@@ -462,10 +489,10 @@ function suggestionHTML(plan, step, f, recs, sug) {
   if (!f.oppChar) return '<p class="muted small">Elegí el personaje del rival para ver qué stages te conviene banear y elegir.</p>';
   if (!recs) return `<p class="muted small">Todavía no tenés games de ${esc(f.myChar)} con stage cargado: las sugerencias aparecen cuando cargues algunos.</p>`;
   if (!sug?.length) return '';
-  const act = step.act === 'ban' ? '🚫 Sugerido banear' : '⭐ Sugerido elegir';
+  const act = step.act === 'ban' ? ic('ban') + ' Sugerido banear' : ic('star') + ' Sugerido elegir';
   return `<div class="sug-box"><b>${act}:</b>
     ${sug.map(s => `<div class="sug-row"><span>${esc(s)}</span><small>${recText(recs[s], f)}</small></div>`).join('')}
-    <small class="muted">Según tus games de ${esc(f.myChar)} en cada stage. ⚠ = menos de ${MIN_N} games vs ese personaje: también cuenta tu récord general en el stage.</small></div>`;
+    <small class="muted">Según tus games de ${esc(f.myChar)} en cada stage. * = menos de ${MIN_N} games vs ese personaje: también cuenta tu récord general en el stage.</small></div>`;
 }
 
 function stageSectionHTML(f) {
@@ -500,6 +527,7 @@ function stageSectionHTML(f) {
       : `<button type="button" class="stage ${cls}" data-a="stageTap" data-v="${esc(s)}">${stageArt(s)}${ban ? '' : badge(s)}${tag}<span>${label}</span></button>`;
   };
   return `<section class="card">
+    <h2 class="blk">Stage</h2>
     ${plan ? banHeaderHTML(plan, f) + (banSug.length ? suggestionHTML(plan, banStep, f, recs, banSug) : '') + suggestionHTML(plan, step, f, recs, sug) : ''}
     ${groups.map(([group, stages]) => `<span class="lbl">${group}</span>
       <div class="${S.settings.stageStyle === 'text' ? 'chips' : 'stage-grid'}">${stages.map(tile).join('')}</div>`).join('')}
@@ -548,10 +576,10 @@ function renderCargar() {
   ${freshBannerHTML()}
   ${driveBannerHTML()}
   ${si.n ? `<div class="setbar"><span>Set vs <b>${esc(f.rival)}</b>${bestOf} · va <b class="win">${si.w}</b>-<b class="loss">${si.l}</b> · cargando <b>G${f.gameNum}</b>${si.start ? ` · empezó ${si.start}` : ''}</span>
-    ${S.editingId ? '' : `<span class="setbar-actions">${compact ? '<button type="button" class="link" data-a="showSet">✎ Cambiar</button>' : ''}
+    ${S.editingId ? '' : `<span class="setbar-actions">${compact ? `<button type="button" class="link" data-a="showSet">${ic('pencil')} Cambiar</button>` : ''}
       <button type="button" class="link" data-a="newSet">Nuevo set</button></span>`}</div>` : ''}
   ${compact ? '' : `<section class="card">
-    <div class="row-between"><span class="lbl">Tipo de partida</span>
+    <div class="row-between"><h2 class="blk">Partida</h2>
       ${dateField(`data-in="date" max="${today()}"`, f.date)}</div>
     <div class="chips">${TYPES.map(([v, l]) => chip('type', v, l, f.type === v)).join('')}</div>
     <label class="lbl" for="rival">Rival</label>
@@ -566,6 +594,7 @@ function renderCargar() {
   </section>`}
 
   <section class="card">
+    <h2 class="blk">Personajes</h2>
     <span class="lbl">Mi personaje</span>
     <div class="chips">
       ${chip('myChar', main, esc(main), f.myChar === main)}
@@ -583,7 +612,7 @@ function renderCargar() {
 
   ${S.editingId ? `<section class="card">
     <details class="vod" data-vod ${vodOpen(f) ? 'open' : ''}>
-      <summary><span class="lbl">📼 Detalle para VOD review</span><span class="muted small">Openings y % de cada stock · opcional, se puede completar después</span></summary>
+      <summary><span class="blk">Detalle para VOD review</span><span class="muted small">Openings y % de cada stock · opcional, se puede completar después</span></summary>
       <div class="vod-body">
         <span class="lbl">Openings</span>
         <div class="counters two">${counter('myOpenings', 'Míos')}${counter('oppOpenings', 'Del rival')}</div>
@@ -597,7 +626,7 @@ function renderCargar() {
 
   <section class="card ${f.myChar === 'Cloud' ? 'limit' : ''}">
     <details class="vod" data-more ${S.settings.moreOpen ? 'open' : ''}>
-      <summary><span class="lbl">➕ Recovery${f.myChar === 'Cloud' ? ' y Limit' : ''}</span><span class="muted small" id="moreSum">${moreSummary(f)}</span></summary>
+      <summary><span class="blk">Recovery${f.myChar === 'Cloud' ? ' y Limit' : ''}</span><span class="muted small" id="moreSum">${moreSummary(f)}</span></summary>
       <div class="vod-body">
         <div class="counters one">${counter('recoveryDeaths', 'Muertes por recovery / edgeguard')}</div>
         ${f.myChar === 'Cloud' ? `<span class="lbl">Limit</span>
@@ -608,7 +637,7 @@ function renderCargar() {
   </section>
 
   <section class="card">
-    <details ${f.notes ? 'open' : ''}><summary class="lbl">Notas (opcional)</summary>
+    <details class="vod" ${f.notes ? 'open' : ''}><summary><span class="blk">Notas</span><span class="muted small">Opcional</span></summary>
       <textarea class="inp" rows="3" data-in="notes" placeholder="Qué funcionó, qué no…">${esc(f.notes)}</textarea>
     </details>
   </section>
@@ -627,7 +656,7 @@ function resultHTML(f) {
   const tone = f.result === 'W' ? 'win' : f.result === 'L' ? 'loss' : '';
   const missing = f.result && f[field] == null && !f.imported;
   return `<section class="card">
-    <span class="lbl">Resultado</span>
+    <h2 class="blk">Resultado</h2>
     <div class="res-line">
       <div class="res-pick">
         <button type="button" class="res-wl win ${f.result === 'W' ? 'on' : ''}" data-a="set" data-f="result" data-v="W">Gané</button>
@@ -875,7 +904,7 @@ function filtersHTML() {
     F.myChar, F.oppChar && 'vs ' + F.oppChar, F.rival, F.stage, F.type && TYPE_LABEL[F.type],
     (F.from || F.to) && `${F.from ? fmtDate(F.from) : '…'} → ${F.to ? fmtDate(F.to) : 'hoy'}`].filter(Boolean).join(' · ');
   return `<div class="filterbar">
-    <button class="btn filter-toggle ${active ? 'has' : ''}" data-a="toggleFilters">Filtros${active ? ` (${active})` : ''} ${S.filtersOpen ? '▴' : '▾'}</button>
+    <button class="btn filter-toggle ${active ? 'has' : ''}" data-a="toggleFilters">Filtros${active ? ` (${active})` : ''} ${ic(S.filtersOpen ? 'up' : 'down')}</button>
     <span class="f-summary">${esc(summary || 'Todos los games')}</span></div>
     ${S.filtersOpen ? `<section class="card filters">
       <div class="chips">${range(7, '7 días')}${range(30, '30 días')}${range(90, '90 días')}
@@ -895,7 +924,7 @@ function filtersHTML() {
     </section>` : ''}`;
 }
 
-const lowBadge = n => `<span class="lowchip" title="Pocos datos">⚠ ${n} game${n === 1 ? '' : 's'}</span>`;
+const lowBadge = n => `<span class="lowchip" title="Pocos datos">Solo ${n} game${n === 1 ? '' : 's'}</span>`;
 
 function tile(key, k, sub) {
   const n = st.sampleSize(k, key);
@@ -939,7 +968,7 @@ function focusHTML(setMap) {
   }
   const curN = cur.kpis ? st.sampleSize(cur.kpis, key) : 0;
   return `<section class="card focus">
-    <div class="row-between"><span class="lbl">🎯 Foco de la semana</span></div>
+    <div class="row-between"><span class="lbl">Foco de la semana</span></div>
     <select class="inp" data-in="focusKpi">${Object.entries(KPIS).map(([k, d]) => `<option value="${k}" ${k === key ? 'selected' : ''}>${d.label}</option>`).join('')}</select>
     <div class="focus-now"><div><div class="muted small">Esta semana</div><div class="big-num">${fmtKpi(key, cv)}</div></div>
       <div class="focus-side">${delta || '<span class="muted small">Sin dato de la semana pasada para comparar</span>'}
@@ -979,7 +1008,7 @@ function patRow(label, r, cls = '') {
   const v = r.n ? r.w / r.n : null;
   return `<div class="pat-row ${r.n < MIN_N ? 'low' : ''} ${cls}"><span>${label}</span>
     <div class="pat-bar"><i style="width:${v == null ? 0 : Math.round(v * 100)}%"></i></div>
-    <b>${v == null ? '—' : Math.round(v * 100) + '%'}</b><small>${r.n}${r.n < MIN_N ? ' ⚠' : ''}</small></div>`;
+    <b>${v == null ? '—' : Math.round(v * 100) + '%'}</b><small>${r.n}${r.n < MIN_N ? '*' : ''}</small></div>`;
 }
 
 function patternsHTML(fg, setMap) {
@@ -996,7 +1025,7 @@ function patternsHTML(fg, setMap) {
       p.pickOpp.n ? patRow('Stage elegido por el rival', p.pickOpp) : '',
     ].filter(Boolean), 'Games 2 en adelante de torneo (el perdedor elige) y games con regla de Steve.')}
     ${block('Cansancio: games jugados ese día', p.fatigue.map(r => patRow(r.label, r)))}
-    <p class="muted small">El número de la derecha es la cantidad de games (o sets). ⚠ = menos de ${MIN_N}.</p>
+    <p class="muted small">El número de la derecha es la cantidad de games (o sets). * = menos de ${MIN_N}.</p>
   </section>`;
 }
 
@@ -1085,7 +1114,7 @@ function torneosHTML() {
   const shownEvents = S.extAllEvents ? events : events.slice(0, 10);
   const tileHTML = (label, val, sub) => `<div class="tile"><div class="t-label">${label}</div><div class="t-val">${val}</div><div class="t-sub">${sub}</div></div>`;
   return `
-    <section class="card"><span class="lbl">🏆 Tus torneos (start.gg)</span>
+    <section class="card"><span class="lbl">Tus torneos (start.gg)</span>
       <p class="muted small">${esc(d.player)} · ${events.length} torneos · actualizado ${fmtDate(d.fetchedAt)}. Resultados por set, incluidos los sets sin detalle por game. Los games con detalle (stage y personajes) también están en Resumen, Matchups y Stages: filtrá por <b>Origen</b> para separarlos.</p>
       <div class="chips">${rangeChip('all', 'Todo')}${rangeChip('year', 'Último año')}${rangeChip('half', 'Últimos 6 meses')}</div>
     </section>
@@ -1110,7 +1139,7 @@ function torneosHTML() {
       ${shownEvents.map(e => {
         const r = rec(sets.filter(s => s.event === e.id && !s.dq));
         return `<div class="ev-row"><div class="ev-main"><b>${esc(e.name)}</b>
-          <small>${fmtDate(e.date)} · ${e.online ? '🌐 Online' : '🏟️ Offline'} · sets ${wl(r)}</small></div>
+          <small>${fmtDate(e.date)} · ${e.online ? ic('globe') + ' Online' : ic('venue') + ' Offline'} · sets ${wl(r)}</small></div>
           <div class="ev-place"><b>${e.placement ? e.placement + 'º' : '—'}</b><small>de ${e.entrants}</small></div></div>`;
       }).join('')}
       ${events.length > shownEvents.length ? `<button class="btn" data-a="extAllEvents">Ver los ${events.length} torneos</button>` : ''}
@@ -1138,7 +1167,7 @@ function compareHTML(setMap) {
     };
     return `<article class="card cmp">
       <div class="mu-head"><b>${title}</b></div>
-      <div class="cmp-row head"><span></span><span>${esc(main)} ${ka.n < MIN_N ? '⚠' : ''}<small>${ka.n} g</small></span><span>${esc(second)} ${kb.n < MIN_N ? '⚠' : ''}<small>${kb.n} g</small></span></div>
+      <div class="cmp-row head"><span></span><span>${esc(main)}${ka.n < MIN_N ? '*' : ''} <small>${ka.n} g</small></span><span>${esc(second)}${kb.n < MIN_N ? '*' : ''} <small>${kb.n} g</small></span></div>
       ${keys.map(row).join('')}
     </article>`;
   };
@@ -1146,7 +1175,7 @@ function compareHTML(setMap) {
   return `${card('Global', A, B)}
     ${shared.length ? shared.map(c => card('vs ' + esc(c), byA.get(c), byB.get(c))).join('')
       : '<p class="empty">Todavía no usaste los dos personajes contra un mismo rival.</p>'}
-    <p class="muted small">En verde el mejor de los dos. ⚠ = menos de ${MIN_N} games, tomalo con pinzas.</p>`;
+    <p class="muted small">En verde el mejor de los dos. * = menos de ${MIN_N} games, tomalo con pinzas.</p>`;
 }
 
 function renderStats() {
@@ -1166,7 +1195,7 @@ function renderStats() {
   else if (S.statsTab === 'stages') body = stagesHTML(fg, setMap);
   else body = compareHTML(setMap);
   view.innerHTML = `${S.statsTab === 'torneos' || !S.games.length ? '' : filtersHTML()}
-    <div class="seg">${seg('resumen', 'Resumen')}${seg('matchups', 'Matchups')}${seg('stages', 'Stages')}${seg('compare', `${esc(S.settings.main)} vs ${esc(S.settings.second)}`)}${seg('torneos', '🏆 Torneos')}</div>
+    <div class="seg">${seg('resumen', 'Resumen')}${seg('matchups', 'Matchups')}${seg('stages', 'Stages')}${seg('compare', `${esc(S.settings.main)}/${esc(S.settings.second)}`)}${seg('torneos', 'Torneos')}</div>
     ${body}`;
 }
 
@@ -1177,7 +1206,7 @@ function gameLine(g) {
   const vod = needsVod(g);
   return `<div class="game ${g.result === 'W' ? 'w' : 'l'}">
     <div class="g-top"><b class="g-res">${g.result}</b><span>G${g.gameNum} · ${esc(g.stage || 'sin stage')}</span>
-      ${st.stocksKnown(g) ? `<span class="muted">${g.myStocksLeft}-${g.oppStocksLeft} stocks</span>` : ''}${vod ? '<span class="vod-badge">📼 VOD pendiente</span>' : ''}</div>
+      ${st.stocksKnown(g) ? `<span class="muted">${g.myStocksLeft}-${g.oppStocksLeft} stocks</span>` : ''}${vod ? `<span class="vod-badge">${ic('vod')} VOD pendiente</span>` : ''}</div>
     <div class="g-info">${esc(g.myChar)} vs ${esc(g.oppChar)}${(g.myOpenings || g.oppOpenings) ? ` · Openings ${g.myOpenings}/${g.oppOpenings}` : ''}      ${g.stagePicker ? `<br>Stage elegido por ${g.stagePicker === 'me' ? 'mí' : 'el rival'}` : ''}
       ${g.bans?.length ? `<br>Baneos: ${g.bans.map(b => `${esc(b.stage)} (${b.by === 'me' ? 'yo' : 'rival'})`).join(', ')}` : ''}
       ${kp.length ? `<br>Maté a: ${kp.join('%, ')}%` : ''}${dp.length ? `<br>Morí a: ${dp.join('%, ')}%` : ''}
@@ -1199,8 +1228,8 @@ function setCardHTML(s, open, games = s.games) {
     <button class="set-head" data-a="toggleSet" data-v="${s.setId}">
       <span class="score"><b class="win">${s.wins}</b>-<b class="loss">${s.losses}</b></span>
       <span class="set-main"><b>vs ${esc(s.rival)}</b><small>${esc(mine)} vs ${esc(chars)}</small>
-        ${ev ? `<small>🏆 ${esc(ev.event)}${ev.round ? ' · ' + esc(ev.round) : ''}</small>` : ''}</span>
-      <span class="set-meta"><small>${fmtDate(s.date)}</small>${setStart(s.games, s.date) ? `<small>🕒 ${setStart(s.games, s.date)}</small>` : ''}<small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
+        ${ev ? `<small>${ic('trophy')} ${esc(ev.event)}${ev.round ? ' · ' + esc(ev.round) : ''}</small>` : ''}</span>
+      <span class="set-meta"><small>${fmtDate(s.date)}</small>${setStart(s.games, s.date) ? `<small>${ic('clock')} ${setStart(s.games, s.date)}</small>` : ''}<small class="tag">${TYPE_LABEL[s.type] || s.type}</small></span>
     </button>
     ${open ? `<div class="set-body">${games.map(gameLine).join('')}
       ${S.histMode === 'vod' ? '' : `<button class="btn" data-a="addToSet" data-v="${s.setId}">+ Agregar game a este set</button>`}</div>` : ''}
@@ -1218,7 +1247,7 @@ function renderHist() {
   if (!mixed) S.histSource = 'all';
   const current = S.histMode === 'vod' ? 'vod' : S.histSource;
   const views = [['all', 'Todos'], ...(mixed ? [['app', 'Míos'], ['startgg', 'start.gg']] : []),
-    ...(pending.length ? [['vod', `📼 VOD <b class="seg-badge">${pending.length}</b>`]] : [])];
+    ...(pending.length ? [['vod', `${ic('vod')} VOD <b class="seg-badge">${pending.length}</b>`]] : [])];
   const viewSeg = views.length > 1 ? `<div class="seg">${views.map(([v, l]) =>
     `<button class="seg-btn ${current === v ? 'on' : ''}" data-a="histView" data-v="${v}">${l}</button>`).join('')}</div>` : '';
 
@@ -1416,7 +1445,7 @@ function driveBannerHTML() {
   if (!driveDue() || S.driveLater) return '';
   const days = S.drive.lastBackup ? Math.floor((Date.now() - S.drive.lastBackup) / DAY) : null;
   return `<section class="card alert">
-    <b>☁️ Toca respaldar en Google Drive</b>
+    <b>${ic('cloud')} Toca respaldar en Google Drive</b>
     <p class="small">${days == null ? 'Todavía no hiciste un respaldo en Drive.' : `El último fue hace ${days} días.`} Se guarda en <b>${esc(S.drive.email)}</b>.</p>
     <div class="btn-row"><button class="btn primary" data-a="driveBackup">Respaldar ahora</button>
       <button class="btn ghost" data-a="driveLater">Más tarde</button></div>
@@ -1438,7 +1467,7 @@ function driveCardHTML() {
   }
   return `<section class="card ${driveDue() ? 'alert' : ''}">
     <span class="lbl">Google Drive</span>
-    <p class="small">☁️ Cuenta: <b>${esc(d.email)}</b></p>
+    <p class="small">${ic('cloud')} Cuenta: <b>${esc(d.email)}</b></p>
     <p class="small">${d.lastBackup ? `Último respaldo en Drive: <b>${fmtStamp(d.lastBackup)}</b>` : 'Todavía no hiciste un respaldo en Drive.'}</p>
     ${busy || `<div class="btn-row"><button class="btn big primary" data-a="driveBackup">Respaldar ahora</button>
       <button class="btn big" data-a="driveRestore">Recuperar</button></div>`}
@@ -1460,7 +1489,7 @@ function requestPersist() {
 // Aviso cuando la base arrancó vacía: si ya había datos, los borró el navegador.
 function freshBannerHTML() {
   if (!S.freshDb || S.freshDismissed) return '';
-  return `<div class="mini-alert"><span>📦 La app arrancó sin datos guardados.</span>
+  return `<div class="mini-alert"><span>La app arrancó sin datos guardados.</span>
     <button type="button" class="link" data-a="freshInfo">¿Tenías datos?</button>
     <button type="button" class="btn icon ghost" data-a="freshOk" aria-label="Cerrar aviso">✕</button></div>`;
 }
@@ -1473,7 +1502,7 @@ function storageCardHTML() {
     <p class="small">Datos guardados en este teléfono desde el <b>${S.createdAt ? fmtDate(st.ymd(new Date(S.createdAt))) : '—'}</b>.
       Si esa fecha cambia sola a hoy, el navegador está borrando los datos.</p>
     <p class="small">${manual} games cargados por vos · ${imported} de torneos · ${S.notes.length} notas · token de start.gg: <b>${S.sgg.token ? 'guardado' : 'no guardado'}</b></p>
-    <p class="small">${S.persisted ? '✅ Almacenamiento persistente activado' : '⚠ El navegador no marcó los datos como persistentes: puede borrarlos si se configura así.'}</p>
+    <p class="small">${S.persisted ? ic('check') + ' Almacenamiento persistente activado' : 'El navegador no marcó los datos como persistentes: puede borrarlos si se configura así.'}</p>
     <button class="btn" data-a="storageHelp">Cómo evitar que Brave borre los datos</button>
   </section>`;
 }
@@ -1500,7 +1529,7 @@ function renderAjustes() {
   <section class="card ${overdue ? 'alert' : ''}">
     <span class="lbl">Respaldo</span>
     <p>${S.lastBackup ? `Último respaldo: <b>${days === 0 ? 'hoy' : `hace ${days} día${days === 1 ? '' : 's'}`}</b>` : '<b>Nunca hiciste un respaldo.</b>'}</p>
-    ${overdue ? '<p class="warn-text">⚠ Pasaron más de 7 días. Exportá un respaldo y mandalo a WhatsApp o Drive: si se borran los datos del navegador, se pierde todo.</p>' : ''}
+    ${overdue ? '<p class="warn-text">Pasaron más de 7 días. Exportá un respaldo y mandalo a WhatsApp o Drive: si se borran los datos del navegador, se pierde todo.</p>' : ''}
     <div class="lbl sub">Respaldo completo (JSON, para volver a importar)</div>
     <div class="btn-row"><button class="btn big primary" data-a="export" data-k="json" data-m="share">Compartir</button>
       <button class="btn big" data-a="export" data-k="json" data-m="download">Descargar</button></div>
@@ -1565,9 +1594,9 @@ function sggCardHTML() {
     ${S.ext ? `<p class="muted small">${imported} games importados de ${S.ext.events.length} torneos · datos del ${fmtDate(S.ext.fetchedAt)}.
       Tienen stage, personajes y ganador; los stocks solo cuando se reportaron.</p>` : ''}
     ${c.token ? `
-      <p class="small">🔑 Conectado${c.gamerTag ? ` como <b>${esc(c.gamerTag)}</b>` : ''} · última actualización: <b>${when}</b></p>
+      <p class="small">${ic('key')} Conectado${c.gamerTag ? ` como <b>${esc(c.gamerTag)}</b>` : ''} · última actualización: <b>${when}</b></p>
       ${!S.ext && !S.syncing ? '<p class="muted small">Todavía no bajaste tus torneos: tocá Actualizar ahora (la primera vez tarda unos segundos).</p>' : ''}
-      ${c.lastError ? `<p class="warn-text small">⚠ La última actualización falló: ${esc(c.lastError)}</p>` : ''}
+      ${c.lastError ? `<p class="warn-text small">La última actualización falló: ${esc(c.lastError)}</p>` : ''}
       ${S.syncing ? `<p class="small">⏳ ${esc(S.syncMsg)}</p>` : '<button class="btn big primary" data-a="sggSync">Actualizar ahora</button>'}
       <span class="lbl sub">Actualizar solo (una vez por día, al abrir la app)</span>
       <div class="chips nums">
@@ -1633,7 +1662,7 @@ function gameNoteHTML(g) {
   return `<button class="note-game" data-a="noteGame" data-v="${g.id}">
     <span class="ng-top"><b class="${g.result === 'W' ? 'win' : 'loss'}">${g.result}</b>
       ${fmtDate(g.date)} · vs ${esc(g.rival)} · G${g.gameNum}${g.stage ? ' · ' + esc(g.stage) : ''}</span>
-    <small>${esc(g.myChar)} vs ${esc(g.oppChar)}${g.event ? ' · 🏆 ' + esc(g.event) : ''}</small>
+    <small>${esc(g.myChar)} vs ${esc(g.oppChar)}${g.event ? ' · ' + ic('trophy') + ' ' + esc(g.event) : ''}</small>
     <span class="ng-text">${esc(g.notes)}</span></button>`;
 }
 
@@ -1721,15 +1750,15 @@ function noteDetailHTML() {
   return `
     <div class="note-head"><button class="btn icon" data-a="noteBack" aria-label="volver">‹</button>
       <div><b>${title}</b><small class="muted">${isMu ? esc(muStats(base.myChar, base.oppChar)) : plStats(base.player)}</small></div></div>
-    ${isMu ? '' : `<button class="btn" data-a="scoutOpen" data-v="${esc(base.player)}">🔎 Scouting de ${esc(base.player)} en start.gg</button>`}
+    ${isMu ? '' : `<button class="btn" data-a="scoutOpen" data-v="${esc(base.player)}">${ic('search')} Scouting de ${esc(base.player)} en start.gg</button>`}
     <section class="card">
       <div class="row-between"><span class="lbl">${isMu ? 'Nota del matchup' : 'Nota del jugador'}</span>
-        <button class="btn sm" data-a="noteFull" aria-label="pantalla completa">⛶ Pantalla completa</button></div>
+        <button class="btn sm" data-a="noteFull" aria-label="pantalla completa">${ic('expand')} Pantalla completa</button></div>
       <textarea class="inp note-text" data-in="noteText" rows="12" placeholder="${notePlaceholder(isMu)}">${esc(n?.text || '')}</textarea>
       <div class="row-between"><span class="muted small note-status">${n ? 'Guardado · ' + fmtDate(st.ymd(new Date(n.updatedAt))) : 'Se guarda solo mientras escribís'}</span>
         ${n ? '<button class="btn sm danger" data-a="noteDelete">Borrar nota</button>' : '<button class="btn sm" data-a="noteTemplate">Usar plantilla</button>'}</div>
       ${isMu && mreDocFor(base.oppChar) ? `<div class="btn-row">
-        <button class="btn sm" data-a="mreUse" data-v="${esc(base.oppChar)}">📘 Usar nota de Mr.E</button>
+        <button class="btn sm" data-a="mreUse" data-v="${esc(base.oppChar)}">${ic('book')} Usar nota de Mr.E</button>
         <button class="btn sm ghost" data-a="mreView" data-v="${esc(base.oppChar)}">Ver guía</button></div>` : ''}
     </section>
     <section class="card">
@@ -1784,8 +1813,8 @@ function mreReaderHTML(d) {
   return `
     <div class="note-head"><button class="btn icon" data-a="mreBack" aria-label="volver">‹</button>
       <div><b>${esc(d.title)}</b><small class="muted">Guía de Mr.E${d.chars ? ' · ' + esc(d.chars.join(', ')) : ''}</small></div></div>
-    ${(d.chars || []).map(c => `<button class="btn" data-a="mreToNote" data-v="${esc(c)}">📝 ${getNote(noteId.mu(my, c)) ? 'Abrir' : 'Crear'} mi nota ${esc(my)} vs ${esc(c)}</button>`).join('')}
-    <button class="btn" data-a="mreFull" data-v="${esc(d.title)}">⛶ Leer en pantalla completa</button>
+    ${(d.chars || []).map(c => `<button class="btn" data-a="mreToNote" data-v="${esc(c)}">${ic('note')} ${getNote(noteId.mu(my, c)) ? 'Abrir' : 'Crear'} mi nota ${esc(my)} vs ${esc(c)}</button>`).join('')}
+    <button class="btn" data-a="mreFull" data-v="${esc(d.title)}">${ic('expand')} Leer en pantalla completa</button>
     <section class="card mre-text">${mreTextHTML(d.text)}</section>`;
 }
 
@@ -1832,7 +1861,7 @@ async function loadScout() {
 }
 
 const scoutBtnHTML = name => (S.sgg.token && norm(name).length >= 2
-  ? `<button type="button" class="btn sm" data-a="scoutOpen" data-v="${esc(name.trim())}">🔎 Scouting de ${esc(name.trim())} en start.gg</button>` : '');
+  ? `<button type="button" class="btn sm" data-a="scoutOpen" data-v="${esc(name.trim())}">${ic('search')} Scouting de ${esc(name.trim())} en start.gg</button>` : '');
 
 const scoutStatus = msg => {
   const b = sheet.querySelector('.scout-body');
@@ -1846,7 +1875,7 @@ async function openScout(name, force = false) {
   const person = scoutData.people[norm(name)];
   const cached = person && scoutData.reports[person.id];
   if (cached && !force) { showScout(cached); return; }
-  openReader(`🔎 ${esc(name)}`, 'Scouting en start.gg', '<div class="scout-body"></div>');
+  openReader(`${ic('search')} ${esc(name)}`, 'Scouting en start.gg', '<div class="scout-body"></div>');
   scoutStatus('Buscando…');
   try {
     const who = person || await findScoutPlayer(name);
@@ -1906,7 +1935,7 @@ async function runScout(name, who) {
 }
 
 function showScout(r) {
-  openReader(`🔎 ${esc(r.gamerTag)}`, `start.gg · últimos ${r.sets.length} sets · datos del ${fmtDate(st.ymd(new Date(r.fetchedAt)))}`,
+  openReader(`${ic('search')} ${esc(r.gamerTag)}`, `start.gg · últimos ${r.sets.length} sets · datos del ${fmtDate(st.ymd(new Date(r.fetchedAt)))}`,
     `<div class="scout-body">${scoutHTML(r)}</div>`);
 }
 
@@ -1942,7 +1971,7 @@ function scoutHTML(r) {
       <div class="sc-row"><span>Sets</span><small>${wl(sw, sets.length)} · ${pct(sw, sets.length)}</small></div>
       ${r.games.length ? `<div class="sc-row"><span>Games</span><small>${wl(gw, r.games.length)} · ${pct(gw, r.games.length)}</small></div>` : ''}
       ${vsMe.length ? `<div class="sc-row"><span>Vos contra ${esc(r.gamerTag)}</span><small>${wl(vsMe.filter(s => s.won).length, vsMe.length)} en sets</small></div>` : ''}
-      ${sets.length < MIN_N ? `<p class="small warn-text">⚠ Solo ${sets.length} sets en start.gg: tomalo como referencia.</p>` : ''}
+      ${sets.length < MIN_N ? `<p class="small warn-text">Solo ${sets.length} sets en start.gg: tomalo como referencia.</p>` : ''}
     </section>
     ${r.games.length ? `
     <section class="card">
@@ -1967,7 +1996,7 @@ function scoutHTML(r) {
     </section>` : ''}
     <div class="btn-row">
       <button class="btn" data-a="scoutRefresh" data-v="${esc(r.gamerTag)}">↻ Actualizar</button>
-      <button class="btn" data-a="scoutToNote" data-v="${r.playerId}">📝 Pasar a su nota</button></div>`;
+      <button class="btn" data-a="scoutToNote" data-v="${r.playerId}">${ic('note')} Pasar a su nota</button></div>`;
 }
 
 // resumen en texto para la nota del jugador
@@ -1993,7 +2022,7 @@ function renderNotas() {
   if (S.noteOpen) { view.innerHTML = noteDetailHTML(); return; }
   const seg = (v, l) => `<button class="seg-btn ${S.notesTab === v ? 'on' : ''}" data-a="notesTab" data-v="${v}">${l}</button>`;
   const body = { mu: notesMuHTML, pl: notesPlHTML, games: notesGamesHTML, mre: notesMreHTML }[S.notesTab]();
-  view.innerHTML = `<div class="seg">${seg('mu', 'Matchups')}${seg('pl', 'Jugadores')}${seg('games', 'Notas de games')}${seg('mre', '📘 Mr.E')}</div>${body}`;
+  view.innerHTML = `<div class="seg">${seg('mu', 'Matchups')}${seg('pl', 'Jugadores')}${seg('games', 'Games')}${seg('mre', ic('book') + ' Mr.E')}</div>${body}`;
 }
 
 function openNote(base) {
@@ -2027,11 +2056,11 @@ async function flushNote() {
 
 // resumen de la nota en la pantalla de carga, para leerla antes de jugar
 function noteHint(n, label) {
-  return n ? `<button type="button" class="note-hint" data-a="noteView" data-v="${esc(n.id)}">📝 <b>${label}</b><span>${esc(snip(n.text, 110))}</span></button>` : '';
+  return n ? `<button type="button" class="note-hint" data-a="noteView" data-v="${esc(n.id)}">${ic('note')} <b>${label}</b><span>${esc(snip(n.text, 110))}</span></button>` : '';
 }
 const rivalNoteHint = () => (S.form.rival.trim().length >= 2 ? noteHint(getNote(noteId.pl(S.form.rival)), `Nota de ${esc(S.form.rival.trim())}`) : '');
 const muNoteHint = () => (S.form.oppChar ? noteHint(getNote(noteId.mu(S.form.myChar, S.form.oppChar)), `Nota ${esc(S.form.myChar)} vs ${esc(S.form.oppChar)}`)
-  + (mreDocFor(S.form.oppChar) ? `<button type="button" class="mre-hint" data-a="mreView" data-v="${esc(S.form.oppChar)}">📘 Guía de Mr.E vs ${esc(S.form.oppChar)}</button>` : '') : '');
+  + (mreDocFor(S.form.oppChar) ? `<button type="button" class="mre-hint" data-a="mreView" data-v="${esc(S.form.oppChar)}">${ic('book')} Guía de Mr.E vs ${esc(S.form.oppChar)}</button>` : '') : '');
 
 // ---------- navegación y eventos ----------
 function go(tab) {
@@ -2086,11 +2115,11 @@ const actions = {
   mreUse: t => applyMreTemplate(t.dataset.v),
   mreView: t => {
     const d = mreDocFor(t.dataset.v);
-    if (d) openReader(`📘 ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
+    if (d) openReader(`${ic('book')} ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
   },
   mreFull: t => {
     const d = mreFind(t.dataset.v);
-    if (d) openReader(`📘 ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
+    if (d) openReader(`${ic('book')} ${esc(d.title)}`, 'Guía de Mr.E', `<div class="mre-text">${mreTextHTML(d.text)}</div>`);
   },
   noteFull: () => openNoteFull(),
   scoutOpen: t => openScout(t.dataset.v),
@@ -2186,7 +2215,7 @@ const actions = {
     if (S.form) Object.assign(S.form, { bans: [], stage: '', stagePicker: null });
     S.tab === 'cargar' ? renderCargar() : renderAjustes();
   },
-  freshInfo: () => openSheet(`<div class="sheet-head"><h2>📦 La app arrancó sin datos</h2><button class="btn icon ghost" data-a="closeSheet" aria-label="Cerrar">✕</button></div>
+  freshInfo: () => openSheet(`<div class="sheet-head"><h2>La app arrancó sin datos</h2><button class="btn icon ghost" data-a="closeSheet" aria-label="Cerrar">✕</button></div>
     <div class="sheet-body"><p class="small">Si es la primera vez que la abrís, ignorá esto. Si ya tenías games, notas o tu token de start.gg,
       <b>el navegador borró los datos de este sitio</b>. Tus torneos de start.gg se cargan de nuevo solos; lo demás se recupera importando un respaldo.</p>
       <button class="btn" data-a="storageHelp">Cómo evitar que pase</button>
@@ -2402,7 +2431,7 @@ view.addEventListener('input', e => {
 
 view.addEventListener('change', async e => {
   const t = e.target;
-  if (t.closest('.date-pick')) t.previousElementSibling.textContent = '📅 ' + (t.value ? fmtDateLong(t.value) : 'dd/mm/aaaa');
+  if (t.closest('.date-pick')) t.previousElementSibling.textContent = t.value ? fmtDateLong(t.value) : 'dd/mm/aaaa';
   if (t.dataset.filter) { S.filters[t.dataset.filter] = t.value || null; renderStats(); return; }
   const k = t.dataset.in;
   if (k === 'date') S.form.date = t.value || today();
@@ -2533,7 +2562,7 @@ async function init() {
     view.innerHTML = '<p class="empty">Volviendo a la app…</p>';
     if (await drive.handOff(driveRet)) {
       window.close();
-      view.innerHTML = '<p class="empty">✅ Listo. Ya podés cerrar esta ventana.</p>';
+      view.innerHTML = '<p class="empty">Listo. Ya podés cerrar esta ventana.</p>';
       return;
     }
   }
@@ -2770,7 +2799,7 @@ function dupsCardHTML() {
   if (!S.dups.length) return '';
   const n = S.dups.length;
   return `<section class="card alert">
-    <b>⚠ ${n} posible${n === 1 ? '' : 's'} duplicado${n === 1 ? '' : 's'}</b>
+    <b>${n} posible${n === 1 ? '' : 's'} duplicado${n === 1 ? '' : 's'}</b>
     <p class="small">${n === 1 ? 'Un set que cargaste a mano también bajó' : 'Sets que cargaste a mano también bajaron'} de start.gg, pero no ${n === 1 ? 'coincide' : 'coinciden'} del todo. ${n === 1 ? 'Revisalo' : 'Revisalos'} para no contarlos dos veces.</p>
     <button class="btn" data-a="dupReview">Revisar</button>
   </section>`;
@@ -2786,7 +2815,7 @@ function dupSheetHTML() {
     if (!M || !I) return '';
     const ev = I.games[0];
     return `<div class="dup-pair">
-      <div class="dup-cols">${side(M, '✍️ Cargado por vos')}${side(I, `🏆 ${esc(ev.event || 'start.gg')}${ev.round ? ' · ' + esc(ev.round) : ''}`)}</div>
+      <div class="dup-cols">${side(M, ic('pencil') + ' Cargado por vos')}${side(I, `${ic('trophy')} ${esc(ev.event || 'start.gg')}${ev.round ? ' · ' + esc(ev.round) : ''}`)}</div>
       <div class="btn-row"><button class="btn primary" data-a="dupMerge" data-v="${esc(m)}|${esc(i)}">Unir</button>
         <button class="btn" data-a="dupSkip" data-v="${esc(m)}|${esc(i)}">Son distintos</button></div>
     </div>`;
@@ -2814,7 +2843,7 @@ function sggTwinHTML() {
     .sort((a, b) => b.lastTs - a.lastTs)[0];
   if (!twin) return '';
   const ev = twin.games[0];
-  return `<div class="h2h twin">🏆 Este set ya bajó de start.gg: <b>${esc(ev.event || '')}</b>${ev.round ? ` · ${esc(ev.round)}` : ''} ·
+  return `<div class="h2h twin">${ic('trophy')} Este set ya bajó de start.gg: <b>${esc(ev.event || '')}</b>${ev.round ? ` · ${esc(ev.round)}` : ''} ·
     <b class="${twin.wins > twin.losses ? 'win' : 'loss'}">${twin.wins}-${twin.losses}</b>
     <small>En vez de cargarlo de nuevo, completalo (baneos, %, notas) editando sus games.</small>
     <button type="button" class="btn sm" data-a="openTwin" data-v="${esc(twin.setId)}">Completar ese set</button></div>`;

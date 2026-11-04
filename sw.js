@@ -4,7 +4,7 @@
 // en segundo plano y queda esperando; la app muestra "Actualizar" y con un toque pasa a la nueva.
 // al publicar cambios, subir este número y APP_VERSION en js/app.js (se muestra en Ajustes):
 // si no se sube, los teléfonos no reciben los cambios.
-const CACHE = 'smash-kpi-v23';
+const CACHE = 'smash-kpi-v24';
 const VERSION = CACHE.replace('smash-kpi-v', '');
 const ASSETS = [
   './',
@@ -21,13 +21,13 @@ const ASSETS = [
   './js/drive.js',
   './manifest.json',
   './manifest-smash.json',
-  './manifest-limpio.json',
+  './manifest-planilla.json',
   './icons/smash-192.png',
   './icons/smash-512.png',
   './icons/smash-maskable-512.png',
-  './icons/limpio-192.png',
-  './icons/limpio-512.png',
-  './icons/limpio-maskable-512.png',
+  './icons/planilla-192.png',
+  './icons/planilla-512.png',
+  './icons/planilla-maskable-512.png',
   './data/mre.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

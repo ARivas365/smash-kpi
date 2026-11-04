@@ -1,4 +1,4 @@
-﻿# Smash KPI
+# Smash KPI
 
 App (PWA) para registrar y analizar KPIs de partidas de Super Smash Bros. Ultimate desde el teléfono.
 Funciona 100% offline, sin cuentas ni servidores: los datos quedan guardados **solo en tu teléfono** (IndexedDB).
@@ -77,7 +77,7 @@ Los datos no se tocan al actualizar.
 | **Estadísticas** | Filtros, Foco de la semana, KPIs, patrones (por game, remontadas, quién eligió el stage, cansancio), gráficos por semana, **Matchups** y **Stages** (los peores en rojo) y **Cloud vs Steve**. |
 | **Historial** | Sets agrupados. Tocá uno para ver sus games, **editarlos**, **borrarlos** o agregar otro game. |
 | **Notas** | Notas por **matchup** (ej. Cloud vs Pikachu) y por **jugador**, con tu récord arriba y las notas de los games que les corresponden. También todas las notas de games con buscador y las **guías de Mr.E** (81 personajes + fundamentos), que se pueden usar como base de una nota de matchup. Al cargar un game, si tenés nota del rival o del matchup, aparece un resumen. |
-| **Ajustes** | Respaldo JSON/CSV, importar, torneos de start.gg (token y actualización), **tema** (Clásico, Smash o Limpio), main/secundario, stocks y datos de ejemplo. |
+| **Ajustes** | Respaldo JSON/CSV, importar, torneos de start.gg (token y actualización), **tema** (Clásico, Smash o Planilla), main/secundario, stocks y datos de ejemplo. |
 
 - ⚠ junto a un dato = menos de 5 games: no saques conclusiones todavía.
 - El CSV usa `;` como separador (lo abren directo Excel en español y Google Sheets).
