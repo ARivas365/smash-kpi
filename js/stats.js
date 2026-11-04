@@ -56,7 +56,7 @@ export function groupSets(games) {
 export function computeKpis(games, setMap) {
   const n = games.length;
   let wins = 0, sd = 0, myO = 0, opO = 0, totDeaths = 0, totKills = 0, rec = 0, stockGames = 0, recGames = 0, recDeaths = 0;
-  let lc = 0, lu = 0, lconv = 0, cloudGames = 0, openGames = 0, killGames = 0, deathGames = 0;
+  let lu = 0, lconv = 0, cloudGames = 0, openGames = 0, killGames = 0, deathGames = 0;
   let opkOpen = 0, opkKills = 0, opkOppOpen = 0, opkDeaths = 0;
   const kills = [], deaths = [], setIds = new Set();
   for (const g of games) {
@@ -80,7 +80,6 @@ export function computeKpis(games, setMap) {
       // Limit solo en games cargados a mano (los importados no lo tienen)
       if (g.myChar === 'Cloud' && !g.imported) {
         cloudGames++;
-        lc += g.limitsCharged || 0;
         lu += g.limitsUsed || 0;
         lconv += g.limitsConverted || 0;
       }
@@ -117,7 +116,7 @@ export function computeKpis(games, setMap) {
     deathPct: avg(deaths), deathGames,
     recoveryRate: recDeaths ? rec / recDeaths : null,
     recoveryDeaths: rec, totDeaths, recDeaths, recGames,
-    limitCharged: lc, limitUsed: lu, limitConverted: lconv, cloudGames,
+    limitUsed: lu, limitConverted: lconv, cloudGames,
     limitConv: lu ? lconv / lu : null,
   };
 }
