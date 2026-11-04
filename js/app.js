@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '17';
+const APP_VERSION = '18';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -161,7 +161,8 @@ function newForm() {
     result: null, stocks: stocksFor(S.settings.defaultType), myStocksLeft: null, oppStocksLeft: null,
     myOpenings: 0, oppOpenings: 0, killPercents: [], deathPercents: [], recoveryDeaths: 0,
     limitsCharged: 0, limitsUsed: 0, limitsConverted: 0, notes: '',
-    rpsWinner: null, prevWinner: null, bans: [], stagePicker: null, banFree: false, bo: 3,
+    rpsWinner: null, prevWinner: null, bans: [], stagePicker: null, banFree: false,
+    bo: S.settings.defaultType === 'practica' && S.settings.practiceSingles ? 1 : 3,
   };
 }
 
@@ -188,8 +189,8 @@ function syncPercents(f) {
 const hasPercents = g => [...(g.killPercents || []), ...(g.deathPercents || [])].some(v => typeof v === 'number' && isFinite(v));
 const hasVodData = g => hasPercents(g) || (g.myOpenings || 0) + (g.oppOpenings || 0) > 0;
 const vodOpen = f => f.vodOpen ?? (f.type !== 'torneo' || hasVodData(f));
-// Pendiente de VOD: game de torneo o práctica sin openings ni % cargados.
-const needsVod = g => g.type !== 'casual' && !g.vodSkip && !hasVodData(g);
+// Pendiente de VOD: game de torneo o práctica sin openings ni % cargados (los games sueltos de práctica no).
+const needsVod = g => g.type !== 'casual' && g.bo !== 1 && !g.vodSkip && !hasVodData(g);
 
 function setInfo(setId, excludeId) {
   const gs = S.games.filter(g => g.setId === setId && g.id !== excludeId);
@@ -515,9 +516,11 @@ function renderCargar() {
     <input id="rival" class="inp" data-in="rival" value="${esc(f.rival)}" placeholder="Nombre del rival" autocomplete="off" autocapitalize="words" enterkeyhint="done">
     <div class="chips scroll-x" id="rivalSug">${rivalSuggestions()}</div>
     <div id="rivalH2H">${rivalBoxHTML()}</div>
-    <div class="row-between"><span class="lbl">Game del set</span>
-      ${f.type !== 'casual' ? `<div class="chips bo">${chip('bo', 3, 'Bo3', f.bo === 3, 'sm')}${chip('bo', 5, 'Bo5', f.bo === 5, 'sm')}</div>` : ''}</div>
-    <div class="chips nums">${Array.from({ length: maxGames(f) }, (_, i) => i + 1).map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>
+    <div class="row-between"><span class="lbl">${f.bo === 1 ? 'Game suelto' : 'Game del set'}</span>
+      ${f.type !== 'casual' ? `<div class="chips bo">${f.type === 'practica' ? chip('bo', 1, 'Suelto', f.bo === 1, 'sm') : ''}
+        ${chip('bo', 3, 'Bo3', f.bo === 3, 'sm')}${chip('bo', 5, 'Bo5', f.bo === 5, 'sm')}</div>` : ''}</div>
+    ${f.bo === 1 ? '<p class="muted small">Cada game se guarda por separado: ideal para arenas o jugar en grupo contra alguien distinto cada vez.</p>'
+      : `<div class="chips nums">${Array.from({ length: maxGames(f) }, (_, i) => i + 1).map(n => chip('gameNum', n, 'G' + n, f.gameNum === n)).join('')}</div>`}
   </section>`}
 
   <section class="card">
@@ -536,7 +539,7 @@ function renderCargar() {
 
   ${resultHTML(f)}
 
-  <section class="card">
+  ${S.editingId ? `<section class="card">
     <details class="vod" data-vod ${vodOpen(f) ? 'open' : ''}>
       <summary><span class="lbl">📼 Detalle para VOD review</span><span class="muted small">Openings y % de cada stock · opcional, se puede completar después</span></summary>
       <div class="vod-body">
@@ -548,7 +551,7 @@ function renderCargar() {
         ${d == null ? '<p class="muted small">Elegí resultado y stocks primero.</p>' : d === 0 ? '<p class="muted small">No perdiste stocks.</p>' : pctInputs('death', f.deathPercents)}
       </div>
     </details>
-  </section>
+  </section>` : ''}
 
   <section class="card ${f.myChar === 'Cloud' ? 'limit' : ''}">
     <details class="vod" data-more ${S.settings.moreOpen ? 'open' : ''}>
@@ -601,7 +604,7 @@ function resultHTML(f) {
 const moreSummary = f => `Recovery ${f.recoveryDeaths || 0}${f.myChar === 'Cloud' ? ` · Limit ${f.limitsCharged || 0}/${f.limitsUsed || 0}/${f.limitsConverted || 0}` : ''} · opcional`;
 
 // games posibles del set: Bo3 hasta 3, Bo5 hasta 5; casual no tiene formato (como mucho 5)
-const maxGames = f => (f.type === 'casual' || f.bo === 5 ? 5 : 3);
+const maxGames = f => (f.bo === 1 ? 1 : f.type === 'casual' || f.bo === 5 ? 5 : 3);
 // formato de un game guardado; los viejos y los de start.gg no lo tienen: si el set llegó a G4, era Bo5
 const boOf = g => g.bo || (S.games.some(x => x.setId === g.setId && x.gameNum > 3) ? 5 : 3);
 
@@ -613,6 +616,7 @@ function setOver(f, si) {
 }
 
 function saveLabel(f, si) {
+  if (f.bo === 1) return 'Guardar y cargar otro';
   if (!f.result) return 'Guardar game';
   const s = setOver(f, si);
   return s.over ? `Guardar · fin del set ${s.w}-${s.l}` : `Guardar → G${f.gameNum + 1}`;
@@ -664,7 +668,16 @@ function setField(field, raw) {
     else { f.myStocksLeft = 0; if (!f.oppStocksLeft) f.oppStocksLeft = null; }
   }
   if (field === 'myChar' && v !== 'Cloud') { f.limitsCharged = f.limitsUsed = f.limitsConverted = 0; }
-  // en Bo3 no existen G4 ni G5
+  // "Suelto" existe solo en práctica, y se recuerda para la próxima vez que elijas práctica
+  if (field === 'type') {
+    if (v === 'practica' && S.settings.practiceSingles) f.bo = 1;
+    else if (f.bo === 1) f.bo = 3;
+  }
+  if (field === 'bo' && f.type === 'practica') {
+    S.settings.practiceSingles = v === 1;
+    db.put('meta', S.settings, 'settings');
+  }
+  // en Bo3 no existen G4 ni G5 (y un game suelto es siempre G1)
   if ((field === 'bo' || field === 'type') && f.gameNum > maxGames(f)) f.gameNum = maxGames(f);
   if (field === 'type') {
     f.stocks = stocksFor(v);
@@ -689,7 +702,7 @@ function cleanGame(f) {
     notes: f.notes.trim(), sample: f.sample, updatedAt: Date.now(),
     rpsWinner: f.type === 'torneo' ? f.rpsWinner : null, prevWinner: f.type === 'torneo' ? f.prevWinner : null,
     bans: f.type === 'torneo' ? f.bans : [], stagePicker: f.stage ? f.stagePicker : null,
-    vodSkip: !!f.vodSkip, bo: f.bo === 5 ? 5 : 3,
+    vodSkip: !!f.vodSkip, bo: [1, 5].includes(f.bo) ? f.bo : 3,
     // datos de start.gg: games importados, o cargados a mano y unidos con su set de start.gg (sggSet)
     ...(f.imported ? { imported: f.imported } : {}),
     ...(f.event ? { event: f.event, eventId: f.eventId, online: f.online, round: f.round } : {}),
@@ -728,11 +741,14 @@ async function saveGame() {
   const need = g.type === 'casual' ? null : (bo === 5 ? 3 : 2);
   const over = g.gameNum >= maxGames({ type: g.type, bo }) || (!!need && (si.w >= need || si.l >= need));
   S.lastSaved = null;
-  S.form = over ? { ...newForm(), date: g.date } : nextForm(g);
+  // game suelto: el siguiente arranca igual (práctica, mismo personaje y día) pero con otro rival
+  const single = bo === 1;
+  S.form = single ? { ...newForm(), date: g.date, type: g.type, bo: 1, myChar: g.myChar, stocks: g.stocks }
+    : over ? { ...newForm(), date: g.date } : nextForm(g);
   render();
   window.scrollTo(0, 0);
-  const msg = over
-    ? `Set ${si.w > si.l ? 'ganado' : si.w < si.l ? 'perdido' : 'terminado'} ${si.w}-${si.l} vs ${g.rival}`
+  const msg = single ? `Game ${g.result === 'W' ? 'ganado' : 'perdido'} vs ${g.rival} guardado`
+    : over ? `Set ${si.w > si.l ? 'ganado' : si.w < si.l ? 'perdido' : 'terminado'} ${si.w}-${si.l} vs ${g.rival}`
     : `G${g.gameNum} guardado · set ${si.w}-${si.l}`;
   toast(msg, 'ok', { label: 'Deshacer', fn: () => undoSave(g.id, before) });
 }
