@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '19';
+const APP_VERSION = '20';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -111,19 +111,27 @@ const backupOverdue = () => S.games.length > 0 && (!S.lastBackup || Date.now() -
 // ---------- hoja inferior (modal) ----------
 let sheetPushed = false, ignorePop = false, sheetResolve = null, sheetOnClose = null;
 
-// La pantalla completa sigue el alto visible (se achica cuando aparece el teclado).
-const fitFull = () => {
-  const panel = sheet.querySelector('.sheet-panel.full');
-  if (panel && window.visualViewport) panel.style.height = `${window.visualViewport.height}px`;
+// Con el teclado abierto, Android achica solo la parte visible de la pantalla: la hoja se sube justo arriba
+// del teclado y entra en lo que se ve (así, al buscar, los resultados se pueden tocar sin cerrar el teclado).
+// La pantalla completa sigue el alto visible.
+const fitSheet = () => {
+  const panel = sheet.querySelector('.sheet-panel');
+  const vv = window.visualViewport;
+  if (!panel || !vv) return;
+  if (panel.classList.contains('full')) { panel.style.height = `${vv.height}px`; return; }
+  const keyboard = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+  panel.style.bottom = `${keyboard}px`;
+  panel.style.maxHeight = `${Math.round(vv.height * 0.9)}px`;
 };
-window.visualViewport?.addEventListener('resize', fitFull);
+window.visualViewport?.addEventListener('resize', fitSheet);
+window.visualViewport?.addEventListener('scroll', fitSheet);
 
 // opts.full: ocupa toda la pantalla · opts.onClose: se llama al cerrar
 function openSheet(html, opts = {}) {
   sheet.innerHTML = `<div class="sheet-backdrop" data-a="closeSheet"></div><div class="sheet-panel ${opts.full ? 'full' : ''}">${html}</div>`;
   sheet.classList.remove('hidden');
   sheetOnClose = opts.onClose || null;
-  if (opts.full) fitFull();
+  fitSheet();
   if (!sheetPushed) { history.pushState({ sheet: true }, ''); sheetPushed = true; }
 }
 function closeSheet(fromPop = false) {
@@ -290,7 +298,12 @@ function rivalSuggestions() {
   }
   list = list.slice(0, 10);
   if (!list.length) return '';
-  return list.map(r => `<button type="button" class="chip sm ${r === S.form.rival ? 'on' : ''}" data-a="rivalPick" data-v="${esc(r)}">${esc(r)}</button>`).join('');
+  // el rival elegido queda marcado con ✕: tocarlo lo quita para buscar otro
+  return list.map(r => {
+    const on = norm(r) === q;
+    return `<button type="button" class="chip sm ${on ? 'on' : ''}" data-a="rivalPick" data-v="${esc(r)}"
+      ${on ? 'aria-label="Quitar rival"' : ''}>${esc(r)}${on ? ' ✕' : ''}</button>`;
+  }).join('');
 }
 
 // Sets de torneo (supermajor) contra el rival escrito, sin contar DQ.
@@ -792,6 +805,12 @@ function openPicker(target) {
     <div class="sheet-body" id="plist"></div>`);
   renderPickerList('');
   $('#pq').addEventListener('input', e => renderPickerList(e.target.value));
+  // la tecla de buscar / Enter del teclado elige la primera coincidencia
+  $('#pq').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || !e.target.value.trim()) return;
+    e.preventDefault();
+    $('#plist .pick')?.click();
+  });
 }
 function renderPickerList(q) {
   const nq = norm(q);
@@ -799,11 +818,16 @@ function renderPickerList(q) {
   const field = pickerTarget === 'my' ? 'myChar' : 'oppChar';
   const current = pickerTarget === 'note' ? null : S.form?.[field];
   const top = topChars(field, 8, pickerTarget === 'my' ? [S.settings.main, S.settings.second] : []);
-  const matches = ROSTER.filter(([n, a]) => !nq || norm(n + ' ' + (a || '')).includes(nq)).map(r => r[0]).sort((a, b) => a.localeCompare(b));
+  // los que empiezan con lo escrito van primero ("mario" → Mario antes que Dr. Mario)
+  const starts = n => (nq && !norm(n).startsWith(nq) ? 1 : 0);
+  const matches = ROSTER.filter(([n, a]) => !nq || norm(n + ' ' + (a || '')).includes(nq)).map(r => r[0])
+    .sort((a, b) => starts(a) - starts(b) || a.localeCompare(b));
   const btn = c => `<button class="pick ${c === current ? 'on' : ''}" data-a="pickDone" data-v="${esc(c)}">${esc(c)}</button>`;
-  $('#plist').innerHTML = `
+  const list = $('#plist');
+  list.innerHTML = `
     ${!nq && top.length ? `<div class="lbl">${pickerTarget === 'my' ? 'Los que más uso' : 'Los que más enfrento'}</div><div class="pick-grid">${top.map(btn).join('')}</div><div class="lbl">Todo el roster</div>` : ''}
     <div class="pick-grid">${matches.map(btn).join('') || '<p class="muted">Sin resultados</p>'}</div>`;
+  list.scrollTop = 0; // la primera coincidencia queda justo debajo del buscador
 }
 
 // ---------- estadísticas ----------
@@ -1997,7 +2021,14 @@ const actions = {
   inc: t => bump(t.dataset.f, 1),
   dec: t => bump(t.dataset.f, -1),
   save: () => saveGame(),
-  rivalPick: t => { S.form.rival = t.dataset.v; autoOppChar(S.form); renderCargar(); },
+  rivalPick: t => {
+    // tocar el rival ya elegido lo quita y deja el campo listo para buscar otro
+    const again = norm(t.dataset.v) === norm(S.form.rival);
+    S.form.rival = again ? '' : t.dataset.v;
+    autoOppChar(S.form);
+    renderCargar();
+    if (again) $('#rival')?.focus();
+  },
   pickChar: t => openPicker(t.dataset.v),
   stageTap: t => stageTap(t.dataset.v),
   setBan: t => { S.form[t.dataset.f] = t.dataset.v || null; renderCargar(); },
