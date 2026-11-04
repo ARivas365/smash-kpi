@@ -75,8 +75,7 @@ export function makeSample() {
         notes: pick(notes), updatedAt: Date.now(),
       };
       if (myChar === 'Cloud') {
-        g.limitsCharged = 1 + Math.floor(r() * 3);
-        g.limitsUsed = Math.floor(r() * (g.limitsCharged + 1));
+        g.limitsUsed = Math.floor(r() * 4);
         for (let i = 0; i < g.limitsUsed; i++) if (r() < 0.4 + trend) g.limitsConverted++;
       }
       games.push(g);
