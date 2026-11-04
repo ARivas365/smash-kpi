@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '18';
+const APP_VERSION = '19';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -559,7 +559,7 @@ function renderCargar() {
       <div class="vod-body">
         <div class="counters one">${counter('recoveryDeaths', 'Muertes por recovery / edgeguard')}</div>
         ${f.myChar === 'Cloud' ? `<span class="lbl">Limit</span>
-          <div class="counters three">${counter('limitsCharged', 'Cargados')}${counter('limitsUsed', 'Usados')}${counter('limitsConverted', 'Dieron kill')}</div>
+          <div class="counters two">${counter('limitsUsed', 'Usados')}${counter('limitsConverted', 'Dieron kill')}</div>
           <p class="muted small">Dieron kill = Limits usados que le sacaron un stock al rival.</p>` : ''}
       </div>
     </details>
@@ -601,7 +601,7 @@ function resultHTML(f) {
   </section>`;
 }
 
-const moreSummary = f => `Recovery ${f.recoveryDeaths || 0}${f.myChar === 'Cloud' ? ` · Limit ${f.limitsCharged || 0}/${f.limitsUsed || 0}/${f.limitsConverted || 0}` : ''} · opcional`;
+const moreSummary = f => `Recovery ${f.recoveryDeaths || 0}${f.myChar === 'Cloud' ? ` · Limit ${f.limitsUsed || 0} usados, ${f.limitsConverted || 0} con kill` : ''} · opcional`;
 
 // games posibles del set: Bo3 hasta 3, Bo5 hasta 5; casual no tiene formato (como mucho 5)
 const maxGames = f => (f.bo === 1 ? 1 : f.type === 'casual' || f.bo === 5 ? 5 : 3);
@@ -650,10 +650,8 @@ function bump(field, delta) {
   const d = deathsKnown(f);
   const max = field === 'recoveryDeaths' ? (d ?? f.stocks) : field.startsWith('limits') ? 20 : 99;
   f[field] = Math.max(0, Math.min(max, (f[field] || 0) + delta));
-  // coherencia: convertidos ≤ usados ≤ cargados
+  // coherencia: los que dieron kill no pueden ser más que los usados
   if (field === 'limitsConverted' && f.limitsConverted > f.limitsUsed) f.limitsUsed = f.limitsConverted;
-  if (field !== 'limitsCharged' && f.limitsUsed > f.limitsCharged) f.limitsCharged = f.limitsUsed;
-  if (field === 'limitsCharged' && f.limitsUsed > f.limitsCharged) f.limitsUsed = f.limitsCharged;
   if (f.limitsConverted > f.limitsUsed) f.limitsConverted = f.limitsUsed;
   updateCounters();
 }
@@ -913,7 +911,7 @@ function resumenHTML(fg, setMap) {
       ${tile('deathPct', k, `más alto = mejor · ${k.deathGames} games con %`)}
       ${tile('earlyDeaths', k, `${k.earlyCount} de ${k.deathRecorded} muertes con %`)}
       ${tile('recoveryRate', k, `${k.recoveryDeaths} de ${k.recDeaths} muertes`)}
-      ${k.cloudGames ? tile('limitConv', k, `${k.limitConverted} kills de ${k.limitUsed} usados · ${k.limitCharged} cargados`) : ''}
+      ${k.cloudGames ? tile('limitConv', k, `${k.limitConverted} kills de ${k.limitUsed} usados`) : ''}
     </div>
     ${patternsHTML(fg, setMap)}
     <section class="card"><span class="lbl">% victoria por semana</span>
@@ -1131,7 +1129,7 @@ function gameLine(g) {
       ${g.bans?.length ? `<br>Baneos: ${g.bans.map(b => `${esc(b.stage)} (${b.by === 'me' ? 'yo' : 'rival'})`).join(', ')}` : ''}
       ${kp.length ? `<br>Maté a: ${kp.join('%, ')}%` : ''}${dp.length ? `<br>Morí a: ${dp.join('%, ')}%` : ''}
       ${g.recoveryDeaths ? `<br>Muertes por recovery: ${g.recoveryDeaths}` : ''}
-      ${g.myChar === 'Cloud' && !(g.imported && !g.limitsCharged) ? `<br>Limit: ${g.limitsCharged} cargados · ${g.limitsUsed} usados · ${g.limitsConverted} dieron kill` : ''}
+      ${g.myChar === 'Cloud' && !(g.imported && !g.limitsUsed) ? `<br>Limit: ${g.limitsUsed || 0} usados · ${g.limitsConverted || 0} dieron kill` : ''}
       ${g.notes ? `<br><i>“${esc(g.notes)}”</i>` : ''}</div>
     ${vod ? `<div class="g-actions"><button class="btn sm primary" data-a="vodFill" data-v="${g.id}">Completar %</button>
       <button class="btn sm ghost" data-a="vodSkip" data-v="${g.id}">No lo voy a revisar</button></div>` : ''}
@@ -1206,7 +1204,7 @@ function backupData() {
 function csvData() {
   const cols = ['fecha', 'hora_inicio_set', 'tipo', 'set', 'game', 'rival', 'mi_personaje', 'personaje_rival', 'stage', 'resultado',
     'mis_stocks', 'stocks_rival', 'mis_openings', 'openings_rival', 'pct_kills', 'pct_muertes', 'muertes_recovery',
-    'limits_cargados', 'limits_usados', 'limits_convertidos', 'eligio_stage', 'baneos', 'notas'];
+    'limits_usados', 'limits_convertidos', 'eligio_stage', 'baneos', 'notas'];
   const setMap = st.groupSets(S.games);
   const sets = [...st.groupSets(S.games).values()].sort((a, b) => a.lastTs - b.lastTs);
   const setNum = new Map(sets.map((s, i) => [s.setId, i + 1]));
@@ -1215,7 +1213,7 @@ function csvData() {
     fmtDateLong(g.date), setStart(setMap.get(g.setId).games, setMap.get(g.setId).date), g.type, setNum.get(g.setId), g.gameNum, g.rival, g.myChar, g.oppChar, g.stage, g.result === 'W' ? 'ganado' : 'perdido',
     g.myStocksLeft, g.oppStocksLeft, g.myOpenings, g.oppOpenings,
     (g.killPercents || []).filter(v => v != null).join('|'), (g.deathPercents || []).filter(v => v != null).join('|'),
-    g.recoveryDeaths, g.limitsCharged, g.limitsUsed, g.limitsConverted,
+    g.recoveryDeaths, g.limitsUsed, g.limitsConverted,
     { me: 'yo', opp: 'rival' }[st.stagePickerOf(g, setMap)] || '',
     (g.bans || []).map(b => `${b.stage} (${b.by === 'me' ? 'yo' : 'rival'})`).join('|'), g.notes,
   ].map(cell).join(';'));
