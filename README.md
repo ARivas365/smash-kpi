@@ -61,7 +61,9 @@ Para probar que anda offline, poné el modo avión y abrila desde el ícono.
 ## 3. Actualizar la app más adelante
 
 1. En GitHub, dentro del repositorio: **Add file → Upload files**, arrastrá los archivos modificados (con sus carpetas) → **Commit changes**.
-2. En el teléfono, abrí la app **dos veces**: la primera descarga la versión nueva en segundo plano y la segunda ya la muestra.
+2. En el teléfono, abrí la app: la versión nueva se descarga sola en segundo plano y arriba aparece **"Hay una versión nueva · Actualizar"**. Un toque y la app se recarga ya actualizada. Si tocás ✕, el aviso vuelve la próxima vez que la abras. También podés tocar **Ajustes → Buscar actualización**.
+
+Al publicar, subí el número en `sw.js` (`CACHE`) y en `js/app.js` (`APP_VERSION`): si no cambia, los teléfonos no reciben la versión nueva.
 
 Los datos no se tocan al actualizar.
 

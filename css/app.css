@@ -252,6 +252,20 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 }
 .mini-alert > span { flex: 1; min-width: 0; }
 
+/* versión nueva lista: arriba de todo, sin tapar nada */
+.update-bar {
+  display: flex; align-items: center; gap: 8px; margin: 12px auto 0; padding: 6px 4px 6px 14px;
+  width: calc(100% - 24px); max-width: 616px; box-sizing: border-box; font-size: .9rem; line-height: 1.3;
+  background: var(--surface2); border: 1px solid var(--accent); border-radius: 14px;
+}
+.update-bar[hidden] { display: none; }
+.update-bar > span { flex: 1; min-width: 0; }
+.update-bar .btn { flex: none; }
+.update-x {
+  flex: none; width: 40px; min-height: 44px; border: 0; background: none; color: var(--muted);
+  font-size: 1rem; cursor: pointer; border-radius: 10px;
+}
+
 .result-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .res {
   min-height: 64px; border-radius: 14px; font-size: 1.2rem; font-weight: 800; cursor: pointer;

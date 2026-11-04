@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '22';
+const APP_VERSION = '23';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -1551,7 +1551,8 @@ function renderAjustes() {
       <button class="btn big danger" data-a="wipe">Borrar todo</button>
     </div>
   </section>
-  <p class="muted small center">Smash KPI v${APP_VERSION} · funciona sin internet · tus datos no salen del teléfono</p>`;
+  <p class="muted small center">Smash KPI v${APP_VERSION} · funciona sin internet · tus datos no salen del teléfono</p>
+  <div class="center"><button class="btn sm" data-a="checkUpdate">Buscar actualización</button></div>`;
 }
 
 function sggCardHTML() {
@@ -2334,6 +2335,7 @@ const actions = {
     renderAjustes();
   },
   setStageStyle: t => { S.settings.stageStyle = t.dataset.v; db.put('meta', S.settings, 'settings'); renderAjustes(); },
+  checkUpdate: () => checkUpdate(true),
   setTheme: t => { S.settings.theme = t.dataset.v; db.put('meta', S.settings, 'settings'); applyTheme(); renderAjustes(); },
   loadSample: () => loadSample(),
   clearSample: async () => {
@@ -2442,6 +2444,87 @@ document.querySelector('.tabbar').addEventListener('click', e => {
   if (b) go(b.dataset.tab);
 });
 
+// ---------- actualizaciones ----------
+// La versión nueva se baja entera en segundo plano y queda esperando (ver sw.js).
+// Arriba aparece "Actualizar": un toque la activa y la app se recarga sola, ya en la versión nueva.
+let swReg = null;
+let swWaiting = null;
+let swLastCheck = 0;
+
+function swVersion(w) {
+  return new Promise(res => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = e => res(e.data);
+    w.postMessage({ type: 'version' }, [ch.port2]);
+    setTimeout(() => res(null), 1500);
+  });
+}
+
+async function offerUpdate(w) {
+  // sin versión anterior en uso (primera vez que se abre) no hay nada que actualizar
+  if (!navigator.serviceWorker.controller) return;
+  swWaiting = w;
+  const v = await swVersion(w);
+  if (swWaiting !== w) return;
+  const bar = $('#updateBar');
+  bar.innerHTML = `<span><b>Hay una versión nueva${v ? ` (v${esc(v)})` : ''}.</b> Ya está descargada.</span>
+    <button type="button" class="btn sm primary" data-u="go">Actualizar</button>
+    <button type="button" class="update-x" data-u="later" aria-label="Después">✕</button>`;
+  bar.hidden = false;
+}
+
+$('#updateBar').addEventListener('click', e => {
+  const b = e.target.closest('[data-u]');
+  if (!b) return;
+  if (b.dataset.u === 'later') { $('#updateBar').hidden = true; return; }
+  if (!swWaiting) return;
+  b.disabled = true;
+  b.textContent = 'Actualizando…';
+  S.updating = true;
+  swWaiting.postMessage({ type: 'activate' });
+  // por si el teléfono no avisa el cambio, recarga igual a los pocos segundos
+  setTimeout(() => location.reload(), 4000);
+});
+
+function watchWorker(w) {
+  if (!w) return;
+  if (w.state === 'installed') { offerUpdate(w); return; }
+  w.addEventListener('statechange', () => { if (w.state === 'installed') offerUpdate(w); });
+}
+
+async function checkUpdate(manual = false) {
+  if (!swReg) { if (manual) toast('Las actualizaciones no funcionan en este navegador', 'err'); return; }
+  if (!manual && Date.now() - swLastCheck < 10 * 60 * 1000) return;
+  swLastCheck = Date.now();
+  try { await swReg.update(); } catch {
+    if (manual) toast(navigator.onLine ? 'No se pudo buscar la actualización' : 'Sin internet: probá más tarde', 'err');
+    return;
+  }
+  if (!manual) return;
+  if (swReg.waiting) { offerUpdate(swReg.waiting); toast('Hay una versión nueva: tocá Actualizar arriba', 'ok'); }
+  else if (swReg.installing) toast('Descargando la versión nueva… en unos segundos aparece Actualizar arriba');
+  else toast(`Ya tenés la última versión (v${APP_VERSION})`, 'ok');
+}
+
+async function setupUpdates() {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  // cuando la versión nueva toma el control, recarga para mostrarla (no la primera vez que se instala)
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading || !(hadController || S.updating)) return;
+    reloading = true;
+    location.reload();
+  });
+  try { swReg = await navigator.serviceWorker.register('./sw.js'); } catch { return; }
+  swLastCheck = Date.now(); // register() ya busca una versión nueva
+  if (swReg.waiting) offerUpdate(swReg.waiting);
+  watchWorker(swReg.installing);
+  swReg.addEventListener('updatefound', () => watchWorker(swReg.installing));
+  // al volver a la app (en Android casi nunca se cierra del todo) busca de nuevo, como mucho cada 10 minutos
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
+}
+
 async function init() {
   // vuelta de Google con el permiso para Drive (se limpia la dirección enseguida)
   const driveRet = drive.takeRedirect();
@@ -2489,7 +2572,7 @@ async function init() {
   else if (driveRet?.token) { driveAuth = driveRet; if (DRIVE_ACTIONS[driveRet.pending]) runDrive(driveRet.pending); }
   requestPersist();
   loadMre();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  setupUpdates();
   // historial de torneos: solo el que bajó este teléfono con su propio token (la app no trae datos de nadie)
   const [stored, sggConf] = await Promise.all([db.get('meta', 'sggExt'), db.get('meta', 'sgg')]);
   Object.assign(S.sgg, sggConf || {});
