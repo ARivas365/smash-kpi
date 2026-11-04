@@ -1,0 +1,18 @@
+{
+  "name": "Smash KPI",
+  "short_name": "Smash KPI",
+  "description": "Registro y análisis de KPIs de Smash Ultimate",
+  "lang": "es",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#140f0e",
+  "theme_color": "#140f0e",
+  "icons": [
+    { "src": "icons/smash-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/smash-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/smash-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
