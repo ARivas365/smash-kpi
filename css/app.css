@@ -549,12 +549,16 @@ details.vod[open] > summary::after { content: "▴"; }
 .theme-sw i { width: 18px; height: 18px; border-radius: 50%; margin-left: -4px; box-shadow: 0 0 0 2px var(--surface2); }
 .theme-sw i:first-child { margin-left: 0; }
 
-/* ---------- tema Smash: cursiva gruesa, formas inclinadas, rojo y dorado ---------- */
+/* ---------- tema Smash: rojo y dorado ----------
+   La cursiva gruesa y lo inclinado van solo donde no se lee letra por letra (título, Guardar, números grandes);
+   botones, pestañas y etiquetas en letra normal para que se lean de un vistazo.
+   Lo elegido va en crema y el dorado queda solo para la acción (Guardar). */
 :root[data-theme="smash"] {
   --bg: #140f0e; --surface: #1f1816; --surface2: #2a211e; --border: #3a2e2a;
   --text: #fbf3ee; --muted: #b3a39b; --accent: #ffc93c; --accent-ink: #2a1b00;
   --win: #3dd68c; --loss: #ff6b6b; --warn: #ff9f43; --limit: #c4a1ff;
-  --radius: 18px; --r-btn: 14px; --r-chip: 0;
+  --radius: 18px; --r-btn: 12px; --r-chip: 10px;
+  --chip-on: #fbf3ee; --chip-on-ink: #140f0e;
   --accent-soft: rgba(255, 201, 60, .12); --accent-line: rgba(255, 201, 60, .45);
   --win-ink: #08291a; --loss-ink: #2c0a0a;
   --topbar-bg: rgba(20, 15, 14, .95); --tabbar-bg: #1a1412; --savebar-bg: rgba(20, 15, 14, .92);
@@ -569,44 +573,32 @@ details.vod[open] > summary::after { content: "▴"; }
   background: var(--smash-red); clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
 }
 [data-theme="smash"] .topbar h1 { font: italic 900 1.5rem var(--font-display); text-transform: uppercase; letter-spacing: -.01em; }
-[data-theme="smash"] .lbl { font-family: var(--font-display); font-style: italic; font-weight: 900; }
-[data-theme="smash"] .lbl.sub, [data-theme="smash"] .lbl-note { font-style: normal; font-weight: 700; }
+[data-theme="smash"] .lbl { font-weight: 800; font-size: .78rem; letter-spacing: .06em; }
+[data-theme="smash"] .lbl.sub, [data-theme="smash"] .lbl-note { font-weight: 700; font-size: .85rem; letter-spacing: 0; }
 [data-theme="smash"] .card { border-color: transparent; }
-[data-theme="smash"] .chip { border: 0; padding: 0 20px; font-style: italic; font-weight: 800; clip-path: var(--slant); }
-[data-theme="smash"] .chip.ghost { background: transparent; box-shadow: inset 0 0 0 2px var(--border); }
-[data-theme="smash"] .chips.nums .chip { padding: 0 10px; }
+[data-theme="smash"] .chip { border-color: transparent; font-weight: 700; }
+[data-theme="smash"] .chip.ghost { border: 1px dashed var(--border); background: transparent; color: var(--muted); }
 [data-theme="smash"] .btn.primary {
   border: 0; clip-path: var(--slant); border-radius: 0; text-transform: uppercase;
   font-family: var(--font-display); font-style: italic; font-weight: 900;
 }
-[data-theme="smash"] .res-wl, [data-theme="smash"] .res-btn, [data-theme="smash"] .score,
-[data-theme="smash"] .t-val, [data-theme="smash"] .big-num, [data-theme="smash"] .g-res {
-  font-family: var(--font-display); font-style: italic; font-weight: 900;
-}
-[data-theme="smash"] .res-wl { border: 0; text-transform: uppercase; clip-path: var(--slant); border-radius: 0; }
-[data-theme="smash"] .res-btn { border: 0; border-radius: 40px; }
-[data-theme="smash"] .setbar { background: var(--smash-red); border-color: var(--smash-red); color: #fff; border-radius: var(--radius); }
-[data-theme="smash"] .setbar .link, [data-theme="smash"] .setbar .win, [data-theme="smash"] .setbar .loss { color: #fff; }
-[data-theme="smash"] .seg { border: 0; border-radius: 0; background: transparent; padding: 0; gap: 6px; }
-[data-theme="smash"] .seg-btn {
-  background: var(--surface); border-radius: 0; clip-path: var(--slant);
-  font-style: italic; font-weight: 800;
-}
-[data-theme="smash"] .seg-btn.on { background: var(--accent); color: var(--accent-ink); box-shadow: none; }
-/* con 5 pestañas (Estadísticas), letra y corte más chicos para que entren */
-[data-theme="smash"] .seg:has(> .seg-btn:nth-child(5)) .seg-btn {
-  font-size: .78rem; clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
-}
-[data-theme="smash"] .tag { border-radius: 0; clip-path: var(--slant); padding: 1px 10px; font-style: italic; font-weight: 800; }
-/* stages a imagen completa, con el nombre encima */
-[data-theme="smash"] .stage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+[data-theme="smash"] .t-val, [data-theme="smash"] .big-num { font-family: var(--font-display); font-style: italic; font-weight: 900; }
+[data-theme="smash"] .res-wl, [data-theme="smash"] .res-btn { border: 0; font-weight: 800; }
+[data-theme="smash"] .score, [data-theme="smash"] .g-res { font-weight: 800; }
+[data-theme="smash"] .setbar { background: var(--surface2); border: 1px solid var(--smash-red); border-radius: 14px; }
+[data-theme="smash"] .setbar .link { color: var(--accent); }
+[data-theme="smash"] .seg { border: 0; background: transparent; padding: 0; gap: 6px; }
+[data-theme="smash"] .seg-btn { background: var(--surface); font-weight: 700; }
+[data-theme="smash"] .seg-btn.on { background: var(--text); color: var(--bg); box-shadow: none; }
+[data-theme="smash"] .seg:has(> .seg-btn:nth-child(5)) { gap: 4px; }
+[data-theme="smash"] .seg:has(> .seg-btn:nth-child(5)) .seg-btn { font-size: .78rem; }
+[data-theme="smash"] .tag { font-weight: 700; }
+/* stages a imagen completa con el nombre encima, en 3 columnas para no alejar el Resultado */
 [data-theme="smash"] .stage { border: 0; }
-[data-theme="smash"] .stage img, [data-theme="smash"] .stage svg { aspect-ratio: 4 / 3; }
-[data-theme="smash"] .ban-tag { aspect-ratio: 4 / 3; }
 [data-theme="smash"] .stage span {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 10px 8px;
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 6px 5px;
   background: linear-gradient(transparent, rgba(20, 15, 14, .95));
-  font: italic 900 .85rem var(--font-display); text-transform: uppercase;
+  font: 800 .72rem var(--font-display);
 }
 [data-theme="smash"] .stage.on { box-shadow: 0 0 0 3px var(--accent); }
 [data-theme="smash"] .stage.on span { background: linear-gradient(transparent, rgba(20, 15, 14, .95)); color: var(--accent); }
@@ -626,16 +618,28 @@ details.vod[open] > summary::after { content: "▴"; }
   --topbar-bg: rgba(12, 12, 14, .94); --tabbar-bg: #151519; --savebar-bg: rgba(12, 12, 14, .9);
   --toast-bg: #1e1e24; --toast-ok: #143a22; --toast-err: #4a1622; --stage-bg: #1e1e24;
 }
-:root[data-theme="limpio"] body { padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + 28px); }
+:root[data-theme="limpio"] body { padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + 40px); }
 [data-theme="limpio"] .topbar { border-bottom: 0; padding-top: calc(env(safe-area-inset-top, 0px) + 16px); }
 [data-theme="limpio"] .topbar h1 { font-size: 1.65rem; font-weight: 800; letter-spacing: -.02em; }
 [data-theme="limpio"] .card { border-color: transparent; padding: 16px; }
 [data-theme="limpio"] .card.alert { border-color: var(--warn); }
-[data-theme="limpio"] .lbl { text-transform: none; letter-spacing: 0; font-size: .85rem; font-weight: 600; }
+/* títulos de sección en blanco; las etiquetas de cada campo, en gris y más chicas */
+[data-theme="limpio"] .lbl { text-transform: none; letter-spacing: 0; font-size: .95rem; font-weight: 700; color: var(--text); }
+[data-theme="limpio"] .lbl.sub, [data-theme="limpio"] .lbl-note { font-size: .85rem; font-weight: 600; color: var(--muted); }
 [data-theme="limpio"] .chip { border: 0; }
 [data-theme="limpio"] .chip.ghost { box-shadow: inset 0 0 0 1px var(--border); }
 [data-theme="limpio"] .btn { border-color: transparent; }
-[data-theme="limpio"] .btn.ghost, [data-theme="limpio"] .btn.danger { border-color: var(--border); }
+[data-theme="limpio"] .btn.ghost { border-color: var(--border); }
+/* Borrar no tiene que verse más que Editar */
+[data-theme="limpio"] .btn.danger { border-color: transparent; background: color-mix(in srgb, var(--loss) 12%, transparent); }
+[data-theme="limpio"] .game .btn:not(.danger) { background: var(--surface); }
+[data-theme="limpio"] .tile { border-color: transparent; }
+[data-theme="limpio"] .seg:has(> .seg-btn:nth-child(5)) { gap: 4px; }
+/* el lima (acción) no se confunde con el verde de las victorias en los gráficos */
+[data-theme="limpio"] .chart .line { stroke: var(--text); }
+[data-theme="limpio"] .chart .pt { fill: var(--text); }
+[data-theme="limpio"] .chart .pt.low { stroke: var(--text); }
+[data-theme="limpio"] .pat-bar i { background: var(--text); }
 [data-theme="limpio"] .btn.primary { font-weight: 800; }
 [data-theme="limpio"] .inp { border-color: transparent; border-radius: 16px; }
 [data-theme="limpio"] .setbar { border: 0; border-radius: 18px; }
@@ -657,5 +661,22 @@ details.vod[open] > summary::after { content: "▴"; }
   left: 12px; right: 12px; bottom: calc(8px + var(--safe-b)); height: var(--tabbar-h); padding-bottom: 0;
   border: 0; border-radius: 22px; box-shadow: 0 8px 30px rgba(0, 0, 0, .5); max-width: 640px; margin: 0 auto;
 }
-[data-theme="limpio"] .tabbar button.active { color: var(--text); }
-[data-theme="limpio"] .savebar { bottom: calc(var(--tabbar-h) + var(--safe-b) + 18px); border-radius: 30px; }
+[data-theme="limpio"] .tabbar button.active { color: var(--accent); }
+/* más aire entre Guardar y la barra de abajo, para no tocar una pestaña por error */
+[data-theme="limpio"] .savebar { bottom: calc(var(--tabbar-h) + var(--safe-b) + 28px); border-radius: 30px; }
+
+/* ---------- comunes a Smash y Limpio ---------- */
+:root[data-theme] .inp::placeholder { color: var(--muted); opacity: 1; }
+:root[data-theme] .inp { caret-color: var(--accent); }
+:root[data-theme] ::selection { background: var(--accent); color: var(--accent-ink); }
+:root[data-theme] .stage.dim { opacity: .6; }
+/* sin franjas de color al costado: el resultado se marca en el propio puntaje o con un fondo suave */
+:root[data-theme] .card.set.won, :root[data-theme] .card.set.lost { border-left: 1px solid transparent; }
+:root[data-theme] .card.set .score { padding: 4px 10px; border-radius: 10px; background: var(--surface2); }
+:root[data-theme] .card.set.won .score { background: color-mix(in srgb, var(--win) 16%, transparent); }
+:root[data-theme] .card.set.lost .score { background: color-mix(in srgb, var(--loss) 16%, transparent); }
+:root[data-theme] .game { border-left: 0; }
+:root[data-theme] .ban-step { border-left: 0; background: var(--accent-soft); }
+:root[data-theme] .ban-step.opp { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+:root[data-theme] .ban-step.done { background: color-mix(in srgb, var(--win) 14%, transparent); }
+:root[data-theme] .mu.bad { border: 1px solid color-mix(in srgb, var(--loss) 55%, transparent); }

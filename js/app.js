@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '21';
+const APP_VERSION = '22';
 const DAY = 86400000;
 const MIN_N = 5;
 
