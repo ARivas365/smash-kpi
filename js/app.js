@@ -7,7 +7,7 @@ import * as sgg from './startgg.js';
 import * as drive from './drive.js';
 
 // mismo número que CACHE en sw.js: se suben juntos en cada actualización
-const APP_VERSION = '20';
+const APP_VERSION = '21';
 const DAY = 86400000;
 const MIN_N = 5;
 
@@ -18,7 +18,7 @@ const sheet = $('#sheet');
 const S = {
   tab: 'cargar',
   games: [],
-  settings: { main: 'Cloud', second: 'Steve', casualStocks: 3, defaultType: 'torneo', stageStyle: 'img' },
+  settings: { main: 'Cloud', second: 'Steve', casualStocks: 3, defaultType: 'torneo', stageStyle: 'img', theme: 'clasico' },
   lastBackup: null,
   focusKpi: 'winGames',
   persisted: false,
@@ -107,6 +107,35 @@ function toast(msg, kind = '', action = null) {
 function setTitle(t) { $('#title').textContent = t; }
 
 const backupOverdue = () => S.games.length > 0 && (!S.lastBackup || Date.now() - S.lastBackup > 7 * DAY);
+
+// ---------- temas ----------
+// [valor, nombre, colores de muestra]; los estilos de cada tema están al final de css/app.css
+const THEMES = [
+  ['clasico', 'Clásico', ['#0f1117', '#4da3ff', '#3ccf8e']],
+  ['smash', 'Smash', ['#e8382f', '#ffc93c', '#140f0e']],
+  ['limpio', 'Limpio', ['#0c0c0e', '#d4f24a', '#f4f4f5']],
+];
+const THEME_KEY = 'smash-kpi-theme'; // copia en localStorage: index.html lo aplica antes de dibujar, sin parpadeo
+
+function applyTheme() {
+  const t = THEMES.some(([v]) => v === S.settings.theme) ? S.settings.theme : 'clasico';
+  if (t === 'clasico') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  // ícono del tema: arriba en la app, en la pestaña y el que se usa al instalar (manifiesto)
+  const icon = t === 'clasico' ? 'icons/icon-192.png' : `icons/${t}-192.png`;
+  $('#appLogo')?.setAttribute('src', icon);
+  document.querySelector('link[rel="icon"]')?.setAttribute('href', icon);
+  document.querySelector('link[rel="apple-touch-icon"]')?.setAttribute('href', icon);
+  document.querySelector('link[rel="manifest"]')?.setAttribute('href', t === 'clasico' ? 'manifest.json' : `manifest-${t}.json`);
+  try { localStorage.setItem(THEME_KEY, t === 'clasico' ? '' : t); } catch {}
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
+}
+
+const themePickerHTML = () => `<div class="theme-grid">${THEMES.map(([v, label, colors]) => `
+  <button type="button" class="theme-opt ${S.settings.theme === v || (!S.settings.theme && v === 'clasico') ? 'on' : ''}" data-a="setTheme" data-v="${v}">
+    <span class="theme-sw" aria-hidden="true">${colors.map(c => `<i style="background:${c}"></i>`).join('')}</span>${label}</button>`).join('')}
+</div>`;
 
 // ---------- hoja inferior (modal) ----------
 let sheetPushed = false, ignorePop = false, sheetResolve = null, sheetOnClose = null;
@@ -1183,27 +1212,26 @@ function renderHist() {
   const q = norm(S.histQuery);
   const pending = S.games.filter(needsVod);
   if (S.histMode === 'vod' && !pending.length) S.histMode = 'all';
-  const modeChips = `<div class="chips">
-    <button class="chip sm ${S.histMode !== 'vod' ? 'on' : ''}" data-a="histMode" data-v="all">Todos</button>
-    <button class="chip sm ${S.histMode === 'vod' ? 'on' : ''}" data-a="histMode" data-v="vod">📼 Pendientes de VOD (${pending.length})</button></div>`;
+  // una sola fila de vistas, solo con las que aplican: Míos / start.gg si hay de los dos, VOD si hay pendientes
+  const nImported = S.games.filter(g => g.imported).length;
+  const mixed = nImported > 0 && nImported < S.games.length;
+  if (!mixed) S.histSource = 'all';
+  const current = S.histMode === 'vod' ? 'vod' : S.histSource;
+  const views = [['all', 'Todos'], ...(mixed ? [['app', 'Míos'], ['startgg', 'start.gg']] : []),
+    ...(pending.length ? [['vod', `📼 VOD <b class="seg-badge">${pending.length}</b>`]] : [])];
+  const viewSeg = views.length > 1 ? `<div class="seg">${views.map(([v, l]) =>
+    `<button class="seg-btn ${current === v ? 'on' : ''}" data-a="histView" data-v="${v}">${l}</button>`).join('')}</div>` : '';
 
   if (S.histMode === 'vod') {
     // sets con games pendientes, abiertos y mostrando solo esos games
     const ids = new Set(pending.map(g => g.setId));
     const sets = [...st.groupSets(S.games).values()].filter(s => ids.has(s.setId)).sort((a, b) => b.lastTs - a.lastTs);
-    view.innerHTML = `${modeChips}
+    view.innerHTML = `${viewSeg}
       <p class="muted small">Games de torneo y práctica sin % cargados. Abrí el VOD, tocá <b>Completar %</b> y anotá a qué % cayó cada stock.</p>
       <button class="btn ghost" data-a="vodSkipAll">Quitar todos de pendientes</button>
       ${sets.map(s => setCardHTML(s, true, s.games.filter(needsVod))).join('')}`;
     return;
   }
-
-  // origen: cargados a mano o importados de start.gg (solo si hay de los dos)
-  const nImported = S.games.filter(g => g.imported).length;
-  if (!nImported || nImported === S.games.length) S.histSource = 'all';
-  const src = (v, l, n) => `<button class="chip sm ${S.histSource === v ? 'on' : ''}" data-a="histSource" data-v="${v}">${l} (${n})</button>`;
-  const sourceChips = nImported && nImported < S.games.length ? `<div class="chips">${src('all', 'Todos', S.games.length)}
-    ${src('app', '✍️ Cargados por mí', S.games.length - nImported)}${src('startgg', '🏆 start.gg', nImported)}</div>` : '';
 
   const sets = [...st.groupSets(S.games).values()]
     .filter(s => S.histSource === 'all' || !!s.games[0].imported === (S.histSource === 'startgg'))
@@ -1212,8 +1240,7 @@ function renderHist() {
   const shown = sets.slice(0, S.histLimit);
   view.innerHTML = `
     ${dupsCardHTML()}
-    ${pending.length ? modeChips : ''}
-    ${sourceChips}
+    ${viewSeg}
     <input class="inp" type="search" data-in="histQuery" value="${esc(S.histQuery)}" placeholder="Buscar rival o personaje…">
     <p class="muted small">${sets.length} sets · ${sets.reduce((a, s) => a + s.games.length, 0)} games</p>
     ${shown.map(s => setCardHTML(s, S.histOpen.has(s.setId))).join('') || '<p class="empty">No hay games.</p>'}
@@ -1310,7 +1337,7 @@ async function importFile(file) {
   await db.putMany('games', games);
   if (Array.isArray(data.notes)) await db.putMany('notes', data.notes.filter(n => n && n.id && typeof n.text === 'string'));
   S.notes = await db.getAll('notes');
-  if (data.settings && mode === 'replace') { Object.assign(S.settings, data.settings); await db.put('meta', S.settings, 'settings'); }
+  if (data.settings && mode === 'replace') { Object.assign(S.settings, data.settings); await db.put('meta', S.settings, 'settings'); applyTheme(); }
   S.games = await db.getAll('games');
   const merged = await reconcile();
   render();
@@ -1337,7 +1364,11 @@ async function runDrive(name) {
     }
   }
   toast('Abriendo Google…');
-  drive.authorize(name, S.drive.email);
+  drive.authorize(name, S.drive.email, res => {
+    if (res.error) { toast('Google Drive: ' + res.error, 'err'); return; }
+    driveAuth = { token: res.token, expires: res.expires };
+    runDrive(name);
+  });
 }
 
 const DRIVE_ACTIONS = {
@@ -1492,6 +1523,8 @@ function renderAjustes() {
 
   <section class="card">
     <span class="lbl">Preferencias</span>
+    <span class="lbl sub">Tema</span>
+    ${themePickerHTML()}
     <label class="f-field"><span>Mi main</span><select class="inp" data-in="setMain">${charOpts(S.settings.main)}</select></label>
     <label class="f-field"><span>Mi secundario</span><select class="inp" data-in="setSecond">${charOpts(S.settings.second)}</select></label>
     <span class="lbl sub">Stocks en partidas casuales</span>
@@ -2263,7 +2296,14 @@ const actions = {
   mSort: t => { S.mSort = t.dataset.v; renderStats(); },
   toggleSet: t => { const id = t.dataset.v; S.histOpen.has(id) ? S.histOpen.delete(id) : S.histOpen.add(id); renderHist(); },
   more: () => { S.histLimit += 25; renderHist(); },
-  histSource: t => { S.histSource = t.dataset.v; S.histLimit = 25; renderHist(); window.scrollTo(0, 0); },
+  histView: t => {
+    const v = t.dataset.v;
+    if (v === 'vod') S.histMode = 'vod';
+    else Object.assign(S, { histMode: 'all', histSource: v });
+    S.histLimit = 25;
+    renderHist();
+    window.scrollTo(0, 0);
+  },
   edit: t => editGame(t.dataset.v, 'historial'),
   vodFill: t => editGame(t.dataset.v, 'historial', true),
   vodSkip: t => skipVod([t.dataset.v]),
@@ -2272,7 +2312,6 @@ const actions = {
     const ok = await ask('Quitar pendientes', `Se van a quitar <b>${ids.length}</b> games de la lista de VOD pendientes. Los datos no se borran.`, [{ value: 'y', label: 'Sí, quitarlos', cls: 'primary' }]);
     if (ok) skipVod(ids);
   },
-  histMode: t => { S.histMode = t.dataset.v; renderHist(); window.scrollTo(0, 0); },
   addToSet: t => {
     const gs = S.games.filter(g => g.setId === t.dataset.v).sort((a, b) => b.gameNum - a.gameNum);
     S.form = nextForm(gs[0]); S.lastSaved = null; S.editingId = null; go('cargar');
@@ -2295,6 +2334,7 @@ const actions = {
     renderAjustes();
   },
   setStageStyle: t => { S.settings.stageStyle = t.dataset.v; db.put('meta', S.settings, 'settings'); renderAjustes(); },
+  setTheme: t => { S.settings.theme = t.dataset.v; db.put('meta', S.settings, 'settings'); applyTheme(); renderAjustes(); },
   loadSample: () => loadSample(),
   clearSample: async () => {
     const ids = S.games.filter(g => g.sample).map(g => g.id);
@@ -2405,6 +2445,15 @@ document.querySelector('.tabbar').addEventListener('click', e => {
 async function init() {
   // vuelta de Google con el permiso para Drive (se limpia la dirección enseguida)
   const driveRet = drive.takeRedirect();
+  // si es la ventana aparte de Google, le pasa el permiso a la app y se cierra sola
+  if (driveRet?.popup) {
+    view.innerHTML = '<p class="empty">Volviendo a la app…</p>';
+    if (await drive.handOff(driveRet)) {
+      window.close();
+      view.innerHTML = '<p class="empty">✅ Listo. Ya podés cerrar esta ventana.</p>';
+      return;
+    }
+  }
   if (driveRet) S.tab = 'ajustes';
   try {
     const [games, settings, lastBackup, focusKpi, notes, driveConf, dupSkip] = await Promise.all([
@@ -2417,6 +2466,7 @@ async function init() {
     // quita restos del formato de ataques que ya no se usa
     S.games = games.map(g => { if ('attacks' in g) delete g.attacks; return g; });
     Object.assign(S.settings, settings || {});
+    applyTheme();
     S.lastBackup = lastBackup || null;
     if (focusKpi && KPIS[focusKpi]) S.focusKpi = focusKpi;
     S.persisted = (await navigator.storage?.persisted?.()) || false;
