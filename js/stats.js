@@ -46,6 +46,8 @@ export function groupSets(games) {
     s.date = first.date;
     s.lastTs = Math.max(...s.games.map(g => g.ts || 0));
     s.decided = s.wins !== s.losses;
+    // game suelto (práctica en arenas o en grupo): no es un set de verdad, no cuenta en las estadísticas de sets
+    s.single = s.games.length === 1 && first.bo === 1;
     s.won = s.wins > s.losses;
   }
   return map;
@@ -95,7 +97,7 @@ export function computeKpis(games, setMap) {
   if (setMap) {
     for (const id of setIds) {
       const s = setMap.get(id);
-      if (s && s.decided) { sets++; if (s.won) setWins++; }
+      if (s && s.decided && !s.single) { sets++; if (s.won) setWins++; }
     }
   }
   return {
@@ -153,13 +155,13 @@ const rate = (gs) => ({ n: gs.length, w: gs.filter(g => g.result === 'W').length
 // Patrones que salen de los datos ya cargados, sin campos extra.
 export function patterns(games, setMap, allGames) {
   // win % por número de game dentro del set
-  const byGameNum = [1, 2, 3, 4, 5].map(num => ({ num, ...rate(games.filter(g => g.gameNum === num)) })).filter(r => r.n);
+  const byGameNum = [1, 2, 3, 4, 5].map(num => ({ num, ...rate(games.filter(g => g.gameNum === num && g.bo !== 1)) })).filter(r => r.n);
 
   // remontadas: sets donde perdí / gané el G1
   const afterLoss = { n: 0, w: 0 }, afterWin = { n: 0, w: 0 };
   for (const id of new Set(games.map(g => g.setId))) {
     const s = setMap.get(id);
-    if (!s || !s.decided) continue;
+    if (!s || !s.decided || s.single) continue;
     const g1 = s.games.find(g => g.gameNum === 1);
     if (!g1) continue;
     const bucket = g1.result === 'W' ? afterWin : afterLoss;
